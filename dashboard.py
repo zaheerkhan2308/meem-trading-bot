@@ -671,7 +671,8 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 40px; }
 let total = 0, ws, delay = 2000;
 
 function connect() {
-  ws = new WebSocket('ws://' + location.host + '/ws');
+  const wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  ws = new WebSocket(wsProto + location.host + '/ws');
 
   ws.onopen = () => {
     document.getElementById('wsdot').classList.add('on');
