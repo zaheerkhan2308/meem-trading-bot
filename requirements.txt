@@ -1,0 +1,42 @@
+# Alpaca market data SDK
+alpaca-py==0.30.1
+
+# HTTP and environment
+requests==2.32.4
+python-dotenv==1.1.1
+
+# Data / numerical
+pandas==2.3.3
+numpy>=1.26
+
+# Technical analysis — repo was taken down; PyPI 0.4.71b0 works on pandas 2.x
+pandas-ta==0.4.71b0
+
+# Historical data (backtester only)
+yfinance==0.2.66
+
+# NLP / FinBERT
+# For CPU-only torch (recommended, avoids 2GB CUDA download):
+#   pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
+#   then run: pip install -r requirements.txt
+transformers==4.46.3
+torch==2.7.1
+
+# Telegram
+python-telegram-bot==21.11.1
+
+# Scheduling
+APScheduler==3.10.4
+
+# Market calendar
+pandas-market-calendars==4.4.1
+
+# Async HTTP backend for python-telegram-bot
+httpx==0.28.1
+
+# Windows timezone data for zoneinfo
+tzdata==2024.2
+
+# Live dashboard
+fastapi==0.115.6
+uvicorn==0.32.1
