@@ -23,12 +23,19 @@ logger = logging.getLogger(__name__)
 _app = FastAPI()
 _connections: set[WebSocket] = set()
 _signals: list[dict] = []
+_scan_log: list[dict] = []
 _status: dict = {
     "running": True,
     "market_open": False,
     "last_scan": None,
 }
 _loop: asyncio.AbstractEventLoop | None = None
+
+
+def _append_log(entry: dict) -> None:
+    _scan_log.append(entry)
+    if len(_scan_log) > 50:
+        _scan_log[:] = _scan_log[-50:]
 
 
 # ── WebSocket ──────────────────────────────────────────────────────────────
@@ -38,7 +45,9 @@ async def ws_endpoint(websocket: WebSocket):
     await websocket.accept()
     _connections.add(websocket)
     try:
-        await websocket.send_json({"type": "init", "signals": _signals, "status": _status})
+        now = datetime.now(_ET).timestamp()
+        fresh = [s for s in _signals if now - s.get("_ts", 0) < 3600]
+        await websocket.send_json({"type": "init", "signals": fresh, "status": _status, "scan_log": _scan_log})
         while True:
             await websocket.receive_text()   # keep-alive
     except WebSocketDisconnect:
@@ -85,20 +94,33 @@ def _dispatch(coro) -> None:
 # ── Public API (called from main.py) ──��───────────────────────────────────
 
 def push_signals(signals: list[dict], scan_time: str) -> None:
+    ts = datetime.now(_ET).timestamp()
+    for s in signals:
+        s["_ts"] = ts
     _signals[:] = signals
     _status["last_scan"] = scan_time
-    _dispatch(_broadcast({"type": "signals", "signals": signals, "status": _status}))
+    entry = {"time": scan_time, "type": "signals",
+             "count": len(signals), "tickers": [s["ticker"] for s in signals]}
+    _append_log(entry)
+    _dispatch(_broadcast({"type": "signals", "signals": signals, "status": _status, "log_entry": entry}))
 
 
 def push_status(market_open: bool, scan_time: str) -> None:
     _status["market_open"] = market_open
     _status["last_scan"] = scan_time
-    _dispatch(_broadcast({"type": "status", "status": _status}))
+    if not market_open:
+        entry = {"time": scan_time, "type": "market_closed"}
+        _append_log(entry)
+        _dispatch(_broadcast({"type": "status", "status": _status, "log_entry": entry}))
+    else:
+        _dispatch(_broadcast({"type": "status", "status": _status}))
 
 
 def push_no_signal(scan_time: str) -> None:
     _status["last_scan"] = scan_time
-    _dispatch(_broadcast({"type": "no_signal", "status": _status}))
+    entry = {"time": scan_time, "type": "no_signal"}
+    _append_log(entry)
+    _dispatch(_broadcast({"type": "no_signal", "status": _status, "log_entry": entry}))
 
 
 def push_shutdown() -> None:
@@ -623,6 +645,109 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 40px; }
   box-shadow: 0 0 0 1.5px var(--green), 0 4px 20px rgba(52,199,89,0.10);
 }
 
+/* ── Scan history log ─────────────────────────────────────────────────────── */
+#log-section { margin-top: 36px; }
+
+.log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+#log-clear {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--blue);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+#log-clear:hover { opacity: 0.7; }
+
+#log-box {
+  background: var(--bg2);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+#log-empty {
+  padding: 28px 20px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--label3);
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: 145px 130px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 18px;
+  border-bottom: 0.5px solid var(--sep);
+  animation: logIn 0.25s ease;
+}
+.log-row:last-child { border-bottom: none; }
+.log-row:hover { background: rgba(128,128,128,0.05); }
+
+@keyframes logIn {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.log-time {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--label3);
+  letter-spacing: 0.1px;
+}
+
+.log-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.log-badge .dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+
+.log-badge.lb-signals     { background: var(--green-bg);        color: var(--green);  }
+.log-badge.lb-signals .dot { background: var(--green); }
+.log-badge.lb-no-signal   { background: var(--orange-bg);       color: var(--orange); }
+.log-badge.lb-no-signal .dot { background: var(--orange); }
+.log-badge.lb-mkt-closed  { background: rgba(128,128,128,0.10); color: var(--label3); }
+.log-badge.lb-mkt-closed .dot { background: var(--label3); }
+
+.log-desc {
+  font-size: 12px;
+  color: var(--label2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-tickers {
+  display: inline-flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.log-ticker-tag {
+  background: var(--bg3);
+  color: var(--label2);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
 </style>
 </head>
 <body>
@@ -665,6 +790,16 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 40px; }
     <span>Scans every 10 min · Market hours only</span>
   </div>
 
+  <div id="log-section">
+    <div class="log-header">
+      <span class="section-label">Scan History</span>
+      <button id="log-clear" onclick="clearLog()">Clear</button>
+    </div>
+    <div id="log-box">
+      <div id="log-empty">No scans yet this session</div>
+    </div>
+  </div>
+
 </main>
 
 <script>
@@ -692,12 +827,17 @@ function connect() {
     if (msg.type === 'init') {
       applyStatus(msg.status);
       [...msg.signals].reverse().forEach(s => addCard(s, false));
+      if (msg.scan_log && msg.scan_log.length) {
+        msg.scan_log.forEach(entry => addLogEntry(entry, false));
+      }
     } else if (msg.type === 'signals') {
       applyStatus(msg.status);
       clearGrid();
       msg.signals.forEach(s => addCard(s, true));
+      if (msg.log_entry) addLogEntry(msg.log_entry, true);
     } else if (msg.type === 'status' || msg.type === 'no_signal') {
       applyStatus(msg.status);
+      if (msg.log_entry) addLogEntry(msg.log_entry, true);
     } else if (msg.type === 'shutdown') {
       document.getElementById('bot-badge').className = 'badge badge-offline';
       document.getElementById('bot-text').textContent = 'Offline';
@@ -831,6 +971,67 @@ function addCard(s, isNew) {
 
   const cards = grid.querySelectorAll('.card');
   if (cards.length > 20) cards[cards.length - 1].remove();
+
+  // Auto-remove after 1 hour from when the signal was generated
+  const signalTs = s._ts ? s._ts * 1000 : Date.now();
+  const expiresIn = Math.max(0, signalTs + 3600000 - Date.now());
+  setTimeout(() => {
+    card.remove();
+    total = Math.max(0, total - 1);
+    const cnt = total > 0 ? total + ' signal' + (total !== 1 ? 's' : '') + ' today' : '';
+    document.getElementById('sig-count').textContent = cnt;
+    document.getElementById('sig-count-label').textContent = cnt;
+    if (!document.getElementById('grid').querySelector('.card')) {
+      const ph = document.createElement('div');
+      ph.id = 'empty';
+      ph.innerHTML = '<div class="empty-icon">📡</div><h3>Scanning for signals…</h3><p>Strong setups appear here in real-time when the market is open</p>';
+      document.getElementById('grid').appendChild(ph);
+    }
+  }, expiresIn);
+}
+
+/* ── Scan history log ── */
+function addLogEntry(entry, prepend) {
+  var box = document.getElementById('log-box');
+  var empty = document.getElementById('log-empty');
+  if (empty) empty.remove();
+
+  var badgeClass, badgeLabel, descHtml;
+  if (entry.type === 'signals') {
+    badgeClass = 'lb-signals';
+    badgeLabel = entry.count + ' Signal' + (entry.count !== 1 ? 's' : '');
+    var tags = (entry.tickers || []).map(function(t) {
+      return '<span class="log-ticker-tag">$' + t + '</span>';
+    }).join('');
+    descHtml = '<span class="log-tickers">' + tags + '</span>';
+  } else if (entry.type === 'no_signal') {
+    badgeClass = 'lb-no-signal';
+    badgeLabel = 'No Signals';
+    descHtml = '<span>No setups passed threshold</span>';
+  } else {
+    badgeClass = 'lb-mkt-closed';
+    badgeLabel = 'Mkt Closed';
+    descHtml = '<span>Scan skipped</span>';
+  }
+
+  var row = document.createElement('div');
+  row.className = 'log-row';
+  row.innerHTML =
+    '<span class="log-time">' + (entry.time || '—') + '</span>' +
+    '<span class="log-badge ' + badgeClass + '"><span class="dot"></span>' + badgeLabel + '</span>' +
+    '<span class="log-desc">' + descHtml + '</span>';
+
+  if (prepend) {
+    box.insertBefore(row, box.firstChild);
+    var rows = box.querySelectorAll('.log-row');
+    if (rows.length > 50) rows[rows.length - 1].remove();
+  } else {
+    box.appendChild(row);
+  }
+}
+
+function clearLog() {
+  document.getElementById('log-box').innerHTML = '<div id="log-empty">No scans yet this session</div>';
 }
 
 /* ── Theme toggle ── */
