@@ -108,19 +108,12 @@ def push_signals(signals: list[dict], scan_time: str) -> None:
 def push_status(market_open: bool, scan_time: str) -> None:
     _status["market_open"] = market_open
     _status["last_scan"] = scan_time
-    if not market_open:
-        entry = {"time": scan_time, "type": "market_closed"}
-        _append_log(entry)
-        _dispatch(_broadcast({"type": "status", "status": _status, "log_entry": entry}))
-    else:
-        _dispatch(_broadcast({"type": "status", "status": _status}))
+    _dispatch(_broadcast({"type": "status", "status": _status}))
 
 
 def push_no_signal(scan_time: str) -> None:
     _status["last_scan"] = scan_time
-    entry = {"time": scan_time, "type": "no_signal"}
-    _append_log(entry)
-    _dispatch(_broadcast({"type": "no_signal", "status": _status, "log_entry": entry}))
+    _dispatch(_broadcast({"type": "no_signal", "status": _status}))
 
 
 def push_shutdown() -> None:
