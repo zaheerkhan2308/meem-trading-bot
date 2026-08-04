@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 
 _URL = os.getenv("DATABASE_URL", "")
 
+if not _URL:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is not set. "
+        "Add it to Railway → service → Variables."
+    )
+
 
 def _conn():
     return psycopg2.connect(_URL)
