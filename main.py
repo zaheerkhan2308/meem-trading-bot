@@ -7,7 +7,6 @@ import pandas_market_calendars as mcal
 from apscheduler.schedulers.background import BackgroundScheduler
 from zoneinfo import ZoneInfo
 
-# Configure logging before any module imports so all loggers inherit this setup
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s — %(message)s",
@@ -18,17 +17,30 @@ logging.basicConfig(
     ],
 )
 
-from config import MAX_SIGNALS, PORT
+from config import (
+    MAX_SIGNALS, PORT,
+    BUY_THRESHOLD, SELL_THRESHOLD, STOP_LOSS_PCT,
+    MAX_POSITION_SIZE, DAILY_LOSS_LIMIT, DAILY_PROFIT_TARGET,
+)
 from scanner import get_top_movers
 from scorer import get_composite_score
 from sentiment import initialize_finbert
 from notifier import send_signal, send_no_signal, send_startup, send_shutdown
+from broker import BrokerClient
+from risk import RiskManager
+from engine import TradingEngine
 import dashboard
+import db
 
 logger = logging.getLogger(__name__)
 
 _NYSE = mcal.get_calendar("NYSE")
 _ET = ZoneInfo("America/New_York")
+
+# Initialized after FinBERT loads
+_broker: BrokerClient | None = None
+_risk: RiskManager | None = None
+_engine: TradingEngine | None = None
 
 
 def _now_et() -> str:
@@ -41,9 +53,51 @@ def is_market_open() -> bool:
     schedule = _NYSE.schedule(start_date=today, end_date=today)
     if schedule.empty:
         return False
-    open_t = schedule.iloc[0]["market_open"]
+    open_t  = schedule.iloc[0]["market_open"]
     close_t = schedule.iloc[0]["market_close"]
     return open_t <= now <= close_t
+
+
+def _update_portfolio() -> None:
+    if _broker is None:
+        return
+    try:
+        account   = _broker.get_account()
+        positions = _broker.get_positions()
+        pos_value   = sum(p["market_value"]   for p in positions)
+        unrealized  = sum(p["unrealized_pl"]  for p in positions)
+        total       = account["portfolio_value"]
+        daily_pnl   = (_risk.realized_pnl + unrealized) if _risk else unrealized
+        daily_pnl_pct = (daily_pnl / total * 100) if total > 0 else 0.0
+        dashboard.push_portfolio({
+            "total_value":    total,
+            "cash":           account["cash"],
+            "positions_value": pos_value,
+            "daily_pnl":      daily_pnl,
+            "daily_pnl_pct":  daily_pnl_pct,
+        })
+    except Exception as exc:
+        logger.error(f"Portfolio update failed: {exc}")
+
+
+def _take_portfolio_snapshot() -> None:
+    """Called daily at ~16:30 ET after market close."""
+    if _broker is None:
+        return
+    try:
+        account   = _broker.get_account()
+        positions = _broker.get_positions()
+        pos_value = sum(p["market_value"] for p in positions)
+        db.save_portfolio_snapshot({
+            "total_value":    account["portfolio_value"],
+            "cash":           account["cash"],
+            "positions_value": pos_value,
+        })
+        if _risk:
+            _risk.reset_daily()
+        logger.info("Daily portfolio snapshot saved and P&L reset")
+    except Exception as exc:
+        logger.error(f"Portfolio snapshot failed: {exc}")
 
 
 def run_scan() -> None:
@@ -59,16 +113,15 @@ def run_scan() -> None:
             logger.info("Market closed — skipping scan")
             return
 
-        # Step 1: get top movers
         tickers = get_top_movers()
         if not tickers:
             logger.warning("No movers returned by scanner")
             send_no_signal()
             dashboard.push_no_signal(scan_time)
+            _update_portfolio()
             return
         logger.info(f"Top movers: {tickers}")
 
-        # Step 2: score each ticker in parallel
         signals = []
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(get_composite_score, t): t for t in tickers}
@@ -78,23 +131,17 @@ def run_scan() -> None:
                     result = future.result(timeout=60)
                     if result is not None:
                         signals.append(result)
-                        logger.info(
-                            f"{ticker}: composite={result['composite_score']:.3f} PASS"
-                        )
+                        logger.info(f"{ticker}: composite={result['composite_score']:.3f} PASS")
                     else:
                         logger.info(f"{ticker}: below threshold — skipped")
                 except Exception as exc:
                     logger.error(f"{ticker}: scoring error — {exc}")
 
-        # Step 3: sort by composite score, cap at MAX_SIGNALS
         signals.sort(key=lambda x: x["composite_score"], reverse=True)
         signals = signals[:MAX_SIGNALS]
 
         elapsed = time.time() - start_ts
-        logger.info(
-            f"=== Scan complete in {elapsed:.1f}s — "
-            f"{len(signals)} signal(s) firing ==="
-        )
+        logger.info(f"=== Scan complete in {elapsed:.1f}s — {len(signals)} signal(s) ===")
 
         if signals:
             send_signal(signals)
@@ -103,17 +150,47 @@ def run_scan() -> None:
             send_no_signal()
             dashboard.push_no_signal(scan_time)
 
+        # Run trading engine on all scored candidates (not just top MAX_SIGNALS)
+        if _engine is not None:
+            _engine.process_signals(signals, scan_time)
+
+        _update_portfolio()
+
     except Exception as exc:
         logger.error(f"Scan cycle failed: {exc}", exc_info=True)
 
 
 def main() -> None:
+    global _broker, _risk, _engine
+
     logger.info("Trading Signal Bot starting up")
 
     dashboard.start_dashboard(host="0.0.0.0", port=PORT)
 
     logger.info("Loading FinBERT — this may take 1-2 minutes on first run...")
     initialize_finbert()
+
+    # Initialise trading engine
+    _broker = BrokerClient(dry_run=dashboard.get_dry_run())
+    _risk   = RiskManager(
+        daily_loss_limit=DAILY_LOSS_LIMIT,
+        daily_profit_target=DAILY_PROFIT_TARGET,
+    )
+    _engine = TradingEngine(
+        broker=_broker, risk=_risk,
+        buy_threshold=BUY_THRESHOLD,
+        sell_threshold=SELL_THRESHOLD,
+        stop_loss_pct=STOP_LOSS_PCT,
+        max_position_usd=MAX_POSITION_SIZE,
+    )
+
+    # Wire callbacks
+    _risk.register_halt_callback(dashboard.push_circuit_breaker)
+    _engine.register_trade_callback(dashboard.push_trade)
+    dashboard.set_engine(_engine)
+
+    # Initial portfolio read
+    _update_portfolio()
 
     scheduler = BackgroundScheduler()
     scheduler.add_job(
@@ -125,6 +202,15 @@ def main() -> None:
         max_instances=1,
         coalesce=True,
     )
+    # Daily portfolio snapshot at 16:35 ET (after market close)
+    scheduler.add_job(
+        _take_portfolio_snapshot,
+        trigger="cron",
+        hour=16, minute=35,
+        timezone=_ET,
+        id="snapshot_job",
+    )
+
     scheduler.start()
     logger.info("Scheduler started — scanning every 10 minutes")
     send_startup()
@@ -133,8 +219,9 @@ def main() -> None:
         while True:
             time.sleep(60)
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Shutting down...")
+        logger.info("Shutting down…")
         scheduler.shutdown()
+        _take_portfolio_snapshot()
         dashboard.push_shutdown()
         send_shutdown()
         logger.info("Scheduler stopped. Goodbye.")

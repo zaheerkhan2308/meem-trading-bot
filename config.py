@@ -14,6 +14,15 @@ SIGNAL_THRESHOLD: float = float(os.getenv("SIGNAL_THRESHOLD", "0.72"))
 MAX_SIGNALS: int = int(os.getenv("MAX_SIGNALS", "5"))
 PORT: int = int(os.getenv("PORT", "8000"))
 
+# Trading engine
+TRADING_MODE: str = os.getenv("TRADING_MODE", "paper")
+MAX_POSITION_SIZE: float = float(os.getenv("MAX_POSITION_SIZE", "100"))
+BUY_THRESHOLD: float = float(os.getenv("BUY_THRESHOLD", "0.72"))
+SELL_THRESHOLD: float = float(os.getenv("SELL_THRESHOLD", "0.40"))
+STOP_LOSS_PCT: float = float(os.getenv("STOP_LOSS_PCT", "0.06"))
+DAILY_LOSS_LIMIT: float = float(os.getenv("DAILY_LOSS_LIMIT", "50.0"))
+DAILY_PROFIT_TARGET: float = float(os.getenv("DAILY_PROFIT_TARGET", "50.0"))
+
 
 def retry_with_backoff(func, max_retries: int = 3):
     """Call func(), retrying up to max_retries times with exponential backoff."""

@@ -65,12 +65,13 @@ def get_composite_score(ticker: str) -> dict | None:
         sentiment_score, sentiment_label, top_headline, top_url = get_sentiment_score(ticker)
     except Exception as exc:
         logger.error(f"{ticker}: sentiment score failed: {exc}")
-        sentiment_score, sentiment_label, top_headline, top_url = 0.0, "NO_NEWS", "", ""
+        sentiment_score, sentiment_label, top_headline, top_url = 0.45, "NEUTRAL", "", ""
 
-    # Gate: no news → skip
+    # Soft-gate: no news → neutral score, don't kill the signal entirely
     if sentiment_label == "NO_NEWS":
-        logger.debug(f"{ticker}: gated out (NO_NEWS)")
-        return None
+        logger.info(f"{ticker}: no recent news — using neutral sentiment (0.45)")
+        sentiment_score = 0.45
+        sentiment_label = "NEUTRAL"
 
     # Current price + 52-week range
     try:
@@ -89,21 +90,39 @@ def get_composite_score(ticker: str) -> dict | None:
         logger.warning(f"{ticker}: 52w range failed: {exc}, defaulting historical=0.5")
         high_52w, low_52w = 0.0, 0.0
 
-    if high_52w == low_52w or high_52w <= 0:
+    # Historical score: reward stocks that have pulled back from their 52w high
+    # (5–30% pullback = healthy setup, not a broken stock)
+    if high_52w <= 0 or high_52w == low_52w:
         historical_score = 0.5
     else:
-        raw = 1.0 - ((current_price - low_52w) / (high_52w - low_52w))
-        historical_score = max(0.0, min(1.0, raw))
+        pct_from_high = (high_52w - current_price) / high_52w
+        if pct_from_high < 0.05:
+            historical_score = 0.40          # at/near 52w high — extended
+        elif pct_from_high <= 0.30:
+            # Sweet spot: 5–30% pullback scales from 0.60 → 1.00
+            historical_score = 0.60 + (pct_from_high - 0.05) / 0.25 * 0.40
+        elif pct_from_high <= 0.55:
+            # 30–55% down: fading score
+            historical_score = 0.60 * (1 - (pct_from_high - 0.30) / 0.25)
+        else:
+            historical_score = 0.0           # >55% down — avoid
+        historical_score = round(max(0.0, min(1.0, historical_score)), 4)
 
-    composite = (
-        tech_score * 0.45
-        + sentiment_score * 0.35
-        + historical_score * 0.20
+    composite = round(
+        tech_score * 0.50
+        + sentiment_score * 0.30
+        + historical_score * 0.20,
+        4,
     )
-    composite = round(composite, 4)
+
+    logger.info(
+        f"{ticker}: tech={tech_score:.3f} sent={sentiment_score:.3f} "
+        f"hist={historical_score:.3f} → composite={composite:.3f} "
+        f"(threshold {SIGNAL_THRESHOLD})"
+    )
 
     if composite < SIGNAL_THRESHOLD:
-        logger.debug(f"{ticker}: composite {composite:.3f} below threshold {SIGNAL_THRESHOLD}")
+        logger.info(f"{ticker}: SKIP — composite {composite:.3f} < threshold {SIGNAL_THRESHOLD}")
         return None
 
     stop_loss = round(current_price * 0.975, 2)
