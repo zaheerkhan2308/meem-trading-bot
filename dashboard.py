@@ -298,10 +298,11 @@ _HTML = """<!DOCTYPE html>
 body {
   background: var(--bg);
   color: var(--label);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
-               "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  font-family: -apple-system, "SF Pro Text", "SF Pro Display",
+               BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
 }
 
@@ -330,7 +331,7 @@ header {
 .badge-online    { background: var(--green-bg);              color: var(--green);  }
 .badge-offline   { background: var(--red-bg);                color: var(--red);    }
 .badge-mktopen   { background: var(--blue-bg);               color: var(--blue);   }
-.badge-mktclosed { background: rgba(235,235,245,0.06);       color: var(--label3); }
+.badge-mktclosed { background: rgba(120,120,128,0.12);        color: var(--label3); }
 .badge-online  .dot { background: var(--green); animation: pulse 2s ease-in-out infinite; }
 .badge-mktopen .dot { background: var(--blue);  animation: pulse 2s ease-in-out infinite; }
 .badge-offline .dot { background: var(--red);   }
@@ -628,24 +629,51 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
 
 /* ── Light mode ── */
 [data-theme="light"] {
-  --bg:     #f2f2f7; --bg2: #ffffff; --bg3: #f2f2f7; --bg4: #e5e5ea;
-  --sep:    rgba(60,60,67,0.18);
-  --label:  #000000; --label2: rgba(60,60,67,0.60); --label3: rgba(60,60,67,0.30);
-  --green:  #34c759; --green-bg: rgba(52,199,89,0.12);
-  --red:    #ff3b30; --red-bg: rgba(255,59,48,0.10);
-  --blue:   #007aff; --blue-bg: rgba(0,122,255,0.10);
-  --orange: #ff9500; --orange-bg: rgba(255,149,0,0.10);
-  --purple: #af52de; --purple-bg: rgba(175,82,222,0.10);
-  --yellow: #ffcc00; --yellow-bg: rgba(255,204,0,0.12);
+  --bg:     #f2f2f7;
+  --bg2:    #ffffff;
+  --bg3:    #e5e5ea;   /* distinct from page bg so pills/tiles/tags are visible */
+  --bg4:    #d1d1d6;
+  --sep:    rgba(60,60,67,0.12);
+  --label:  #000000;
+  --label2: rgba(60,60,67,0.60);
+  --label3: rgba(60,60,67,0.45);  /* iOS Settings secondary label — was 0.30, too faint */
+  --green:  #34c759; --green-bg:  rgba(52,199,89,0.16);
+  --red:    #ff3b30; --red-bg:    rgba(255,59,48,0.13);
+  --blue:   #007aff; --blue-bg:   rgba(0,122,255,0.13);
+  --orange: #ff9500; --orange-bg: rgba(255,149,0,0.14);
+  --purple: #af52de; --purple-bg: rgba(175,82,222,0.13);
+  --yellow: #ffcc00; --yellow-bg: rgba(255,204,0,0.15);
 }
-[data-theme="light"] header { background: rgba(242,242,247,0.88); }
-[data-theme="light"] #theme-btn { background: rgba(60,60,67,0.06); }
-[data-theme="light"] #theme-btn:hover { background: rgba(60,60,67,0.10); }
-[data-theme="light"] #kill-btn.ks-off { background: rgba(60,60,67,0.07); }
-[data-theme="light"] #dry-btn.dr-off  { background: rgba(60,60,67,0.07); }
+
+/* shared shadow for card-like surfaces in light mode */
+[data-theme="light"] .card,
+[data-theme="light"] .pf-tile,
+[data-theme="light"] .chart-card,
+[data-theme="light"] #statusbar,
+[data-theme="light"] #log-box,
+[data-theme="light"] #trade-box {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 0 0 0.5px rgba(0,0,0,0.06);
+}
+[data-theme="light"] .card.fresh {
+  box-shadow: 0 0 0 1.5px var(--green), 0 4px 20px rgba(52,199,89,0.12);
+}
 [data-theme="light"] .card::before { display: none; }
-[data-theme="light"] .card { box-shadow: 0 1px 4px rgba(0,0,0,0.07), 0 0 0 0.5px rgba(0,0,0,0.05); }
-[data-theme="light"] .card.fresh { box-shadow: 0 0 0 1.5px var(--green), 0 4px 20px rgba(52,199,89,0.10); }
+
+/* header */
+[data-theme="light"] header { background: rgba(242,242,247,0.92); }
+
+/* badge-mktclosed adapts for light */
+[data-theme="light"] .badge-mktclosed { background: rgba(60,60,67,0.08); }
+
+/* control buttons */
+[data-theme="light"] #theme-btn        { background: rgba(60,60,67,0.07); }
+[data-theme="light"] #theme-btn:hover  { background: rgba(60,60,67,0.12); }
+[data-theme="light"] #kill-btn.ks-off  { background: rgba(60,60,67,0.07); color: rgba(60,60,67,0.50); }
+[data-theme="light"] #dry-btn.dr-off   { background: rgba(60,60,67,0.07); color: rgba(60,60,67,0.50); }
+
+/* row hover — more visible on white */
+[data-theme="light"] .log-row:hover,
+[data-theme="light"] .trade-row:hover  { background: rgba(0,0,0,0.035); }
 
 @media (max-width: 680px) {
   header { padding: 0 16px; }
