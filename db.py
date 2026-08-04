@@ -12,12 +12,15 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-_URL = os.getenv("DATABASE_URL", "")
+# NEON_DATABASE_URL takes priority so Railway's own Postgres plugin
+# (which auto-injects DATABASE_URL pointing to a local socket) can't override it.
+_URL = os.getenv("NEON_DATABASE_URL") or os.getenv("DATABASE_URL", "")
 
-if not _URL:
+if not _URL or _URL.startswith("/") or "/.s.PGSQL." in _URL:
     raise RuntimeError(
-        "DATABASE_URL environment variable is not set. "
-        "Add it to Railway → service → Variables."
+        "No valid Neon connection string found. "
+        "Set NEON_DATABASE_URL in Railway → service → Variables "
+        "(copy the postgresql://... URL from your Neon dashboard)."
     )
 
 
