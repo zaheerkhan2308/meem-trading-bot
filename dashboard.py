@@ -282,9 +282,9 @@ header {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px;
 }
-.hdr-left { display: flex; flex-direction: column; gap: 1px; }
-.hdr-title { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; color: var(--label); }
-.hdr-sub   { font-size: 11px; color: var(--label3); font-weight: 400; }
+.hdr-left { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; overflow: hidden; }
+.hdr-title { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; color: var(--label); white-space: nowrap; }
+.hdr-sub   { font-size: 11px; color: var(--label3); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hdr-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
 /* ── Badges ── */
