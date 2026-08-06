@@ -278,13 +278,14 @@ header {
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   border-bottom: 0.5px solid var(--sep);
-  padding: 0 28px; height: 60px;
+  padding: 10px 28px; min-height: 60px;
   display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
 }
 .hdr-left { display: flex; flex-direction: column; gap: 1px; }
 .hdr-title { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; color: var(--label); }
 .hdr-sub   { font-size: 11px; color: var(--label3); font-weight: 400; }
-.hdr-right { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.hdr-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
 /* ── Badges ── */
 .badge {
@@ -306,11 +307,11 @@ header {
 /* ── Control toggles ── */
 .ctrl-btn {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 11px; border-radius: 9px; border: none;
+  padding: 7px 12px; border-radius: 9px; border: none;
   font-size: 11px; font-weight: 600; letter-spacing: 0.2px;
   cursor: pointer; font-family: inherit;
   transition: background 0.2s, color 0.2s;
-  white-space: nowrap;
+  white-space: nowrap; min-height: 34px; touch-action: manipulation;
 }
 .ctrl-btn .dot { width: 5px; height: 5px; }
 #kill-btn.ks-off { background: rgba(235,235,245,0.08); color: var(--label3); }
@@ -524,8 +525,51 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
   header { padding: 0 16px; }
   main { padding: 20px 16px 60px; }
   #portfolio-bar { grid-template-columns: 1fr 1fr; }
-  .trade-row { grid-template-columns: 100px 54px 80px 80px 60px 1fr; gap: 6px; padding: 10px 12px; }
   #kill-btn span.ctrl-label, #dry-btn span.ctrl-label { display: none; }
+
+  /* Scan log: tighten columns */
+  .log-row { grid-template-columns: auto 100px 1fr; gap: 8px; padding: 10px 14px; }
+  .log-time { font-size: 11px; }
+
+  /* Trade rows: collapse to 2-line card layout */
+  .trade-row {
+    grid-template-columns: auto 1fr auto auto;
+    grid-template-rows: auto auto;
+    gap: 4px 10px;
+    padding: 11px 14px;
+  }
+  .trade-time   { display: none; }
+  .trade-action { grid-column: 1; grid-row: 1; }
+  .trade-ticker { grid-column: 2; grid-row: 1; font-size: 14px; }
+  .trade-qty    { grid-column: 3; grid-row: 1; }
+  .trade-pnl    { grid-column: 4; grid-row: 1; }
+  .trade-reason {
+    grid-column: 1 / -1; grid-row: 2;
+    white-space: normal; overflow: visible; text-overflow: unset;
+    font-size: 11px; line-height: 1.4;
+  }
+
+  /* Status bar: stack vertically */
+  #statusbar { flex-direction: column; gap: 6px; text-align: center; }
+}
+
+@media (max-width: 430px) {
+  /* Header: allow badge + controls to wrap */
+  .hdr-right { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+  .hdr-title { font-size: 15px; }
+  .hdr-sub   { font-size: 10px; }
+
+  /* Portfolio tiles: slightly smaller text */
+  .pf-val    { font-size: 19px; }
+  .pf-val-sm { font-size: 16px; }
+  .pf-lbl    { font-size: 9px; }
+
+  /* Chart delta smaller */
+  #chart-total { font-size: 22px; }
+
+  /* Scan log: hide time on very small screens, just show badge + desc */
+  .log-row { grid-template-columns: 100px 1fr; }
+  .log-time { display: none; }
 }
 </style>
 </head>
