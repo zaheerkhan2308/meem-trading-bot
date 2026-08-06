@@ -21,6 +21,7 @@ yfinance==0.2.66
 #   then run: pip install -r requirements.txt
 transformers==4.46.3
 torch==2.7.1
+accelerate>=0.26.0
 
 # Telegram
 python-telegram-bot==21.11.1

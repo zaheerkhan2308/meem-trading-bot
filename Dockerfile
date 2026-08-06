@@ -10,7 +10,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV TRANSFORMERS_CACHE=/app/model_cache
 ENV HF_HOME=/app/model_cache
 
 # Bake FinBERT into the image so runtime never needs to download it.
