@@ -18,14 +18,14 @@ logging.basicConfig(
 )
 
 from config import (
-    MAX_SIGNALS, PORT,
+    PORT,
     BUY_THRESHOLD, SELL_THRESHOLD, STOP_LOSS_PCT,
     MAX_POSITION_SIZE, DAILY_LOSS_LIMIT, DAILY_PROFIT_TARGET,
 )
 from scanner import get_top_movers
 from scorer import get_composite_score
 from sentiment import initialize_finbert
-from notifier import send_signal, send_no_signal, send_startup, send_shutdown
+from notifier import send_startup, send_shutdown
 from broker import BrokerClient
 from risk import RiskManager
 from engine import TradingEngine
@@ -116,13 +116,12 @@ def run_scan() -> None:
         tickers = get_top_movers()
         if not tickers:
             logger.warning("No movers returned by scanner")
-            send_no_signal()
-            dashboard.push_no_signal(scan_time)
+            dashboard.push_scan_complete(scan_time, [])
             _update_portfolio()
             return
         logger.info(f"Top movers: {tickers}")
 
-        signals = []
+        candidates = []
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(get_composite_score, t): t for t in tickers}
             for future in as_completed(futures):
@@ -130,29 +129,22 @@ def run_scan() -> None:
                 try:
                     result = future.result(timeout=60)
                     if result is not None:
-                        signals.append(result)
-                        logger.info(f"{ticker}: composite={result['composite_score']:.3f} PASS")
+                        candidates.append(result)
+                        logger.info(f"{ticker}: composite={result['composite_score']:.3f}")
                     else:
-                        logger.info(f"{ticker}: below threshold — skipped")
+                        logger.info(f"{ticker}: scoring returned None — skipped")
                 except Exception as exc:
                     logger.error(f"{ticker}: scoring error — {exc}")
 
-        signals.sort(key=lambda x: x["composite_score"], reverse=True)
-        signals = signals[:MAX_SIGNALS]
+        candidates.sort(key=lambda x: x["composite_score"], reverse=True)
 
         elapsed = time.time() - start_ts
-        logger.info(f"=== Scan complete in {elapsed:.1f}s — {len(signals)} signal(s) ===")
+        logger.info(f"=== Scan complete in {elapsed:.1f}s — {len(candidates)} candidate(s) ===")
 
-        if signals:
-            send_signal(signals)
-            dashboard.push_signals(signals, scan_time)
-        else:
-            send_no_signal()
-            dashboard.push_no_signal(scan_time)
+        dashboard.push_scan_complete(scan_time, [c["ticker"] for c in candidates])
 
-        # Run trading engine on all scored candidates (not just top MAX_SIGNALS)
         if _engine is not None:
-            _engine.process_signals(signals, scan_time)
+            _engine.process_signals(candidates, scan_time)
 
         _update_portfolio()
 

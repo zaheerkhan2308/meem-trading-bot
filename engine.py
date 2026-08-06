@@ -56,22 +56,34 @@ class TradingEngine:
             logger.error(f"Engine: broker state fetch failed: {exc}")
             return
 
-        scored = {s["ticker"]: s["composite_score"] for s in signals}
+        scored = {s["ticker"]: s for s in signals}
 
         # Exit: sell positions that hit stop-loss or dropped below sell threshold
         for ticker, pos in positions.items():
             if self.risk.is_halted():
                 break
-            score = scored.get(ticker, 0.0)
+            sig = scored.get(ticker)
+            score = sig["composite_score"] if sig else 0.0
             price = pos["current_price"]
             entry = pos["avg_entry"]
             pnl_pct = (price - entry) / entry if entry else 0.0
 
             reason = None
             if pnl_pct <= -self.stop_loss_pct:
-                reason = f"Stop loss hit ({pnl_pct * 100:.1f}%)"
+                reason = (
+                    f"Stop-loss hit — entry ${entry:.2f} → ${price:.2f} "
+                    f"({pnl_pct * 100:.1f}%)"
+                )
+            elif sig is None:
+                reason = (
+                    f"Not in scan this cycle — exiting position "
+                    f"(entry ${entry:.2f}, current ${price:.2f}, {pnl_pct * 100:+.1f}%)"
+                )
             elif score < self.sell_threshold:
-                reason = f"Score below threshold ({score:.3f})"
+                reason = (
+                    f"Score {score:.3f} below sell threshold {self.sell_threshold} — "
+                    f"entry ${entry:.2f}, current ${price:.2f} ({pnl_pct * 100:+.1f}%)"
+                )
 
             if reason and ticker not in open_orders:
                 result = self.broker.close_position(ticker)
@@ -89,7 +101,7 @@ class TradingEngine:
                     self._fire_trade(trade)
                     logger.info(f"SELL {ticker}: {reason} P&L=${realized:+.2f}")
 
-        # Entry: buy new positions for high-scoring signals
+        # Entry: buy new positions for high-scoring candidates
         for sig in signals:
             if self.risk.is_halted():
                 break
@@ -124,7 +136,12 @@ class TradingEngine:
                     "ticker": ticker, "action": "BUY",
                     "qty": qty, "price": price,
                     "score": score,
-                    "reason": f"Score {score:.3f} ≥ threshold {self.buy_threshold}",
+                    "reason": (
+                        f"Score {score:.3f} >= {self.buy_threshold} | "
+                        f"tech={sig.get('technical_score', 0):.3f} "
+                        f"sent={sig.get('sentiment_score', 0):.3f} "
+                        f"hist={sig.get('historical_score', 0):.3f}"
+                    ),
                     "scan_time": scan_time,
                     "dry_run": self.broker.dry_run,
                     "pnl": 0.0,

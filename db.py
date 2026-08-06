@@ -46,30 +46,6 @@ def init_tables() -> None:
     with _conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS signals (
-                    id              SERIAL PRIMARY KEY,
-                    fired_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    scan_time_label VARCHAR(60),
-                    ticker          VARCHAR(10)  NOT NULL,
-                    composite_score NUMERIC(5,4),
-                    technical_score NUMERIC(5,4),
-                    sentiment_score NUMERIC(5,4),
-                    historical_score NUMERIC(5,4),
-                    sentiment_label VARCHAR(20),
-                    top_headline    TEXT,
-                    top_url         TEXT,
-                    rsi             NUMERIC(5,1),
-                    macd_cross      BOOLEAN,
-                    ema_reclaim     BOOLEAN,
-                    volume_ratio    NUMERIC(7,2),
-                    current_price   NUMERIC(12,2),
-                    entry_low       NUMERIC(12,2),
-                    entry_high      NUMERIC(12,2),
-                    stop_loss       NUMERIC(12,2),
-                    take_profit     NUMERIC(12,2)
-                )
-            """)
-            cur.execute("""
                 CREATE TABLE IF NOT EXISTS scan_log (
                     id              SERIAL PRIMARY KEY,
                     scanned_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -115,35 +91,6 @@ def init_tables() -> None:
 
 
 # ── Writes ─────────────────────────────────────────────────────────────────
-
-def save_signals(signals: list[dict], scan_time: str) -> None:
-    try:
-        with _conn() as conn:
-            with conn.cursor() as cur:
-                for s in signals:
-                    cur.execute("""
-                        INSERT INTO signals
-                            (scan_time_label, ticker, composite_score, technical_score,
-                             sentiment_score, historical_score, sentiment_label,
-                             top_headline, top_url, rsi, macd_cross, ema_reclaim,
-                             volume_ratio, current_price, entry_low, entry_high,
-                             stop_loss, take_profit)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    """, (
-                        scan_time, s["ticker"],
-                        s.get("composite_score"), s.get("technical_score"),
-                        s.get("sentiment_score"), s.get("historical_score"),
-                        s.get("sentiment_label"),
-                        s.get("top_headline"), s.get("top_url", ""),
-                        s.get("rsi"),
-                        s.get("macd_cross", False), s.get("ema_reclaim", False),
-                        s.get("volume_ratio", 0.0), s.get("current_price"),
-                        s.get("entry_low"), s.get("entry_high"),
-                        s.get("stop_loss"), s.get("take_profit"),
-                    ))
-            conn.commit()
-    except Exception as exc:
-        logger.error(f"DB save_signals failed: {exc}")
 
 
 def save_scan_log(scan_time: str, event_type: str,
@@ -215,22 +162,6 @@ def save_circuit_breaker_event(reason: str) -> None:
 
 
 # ── Reads ──────────────────────────────────────────────────────────────────
-
-def load_signals(limit: int = 20) -> list[dict]:
-    """Return the most recent signals, oldest-first (matches in-memory order)."""
-    try:
-        with _conn() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT * FROM (
-                        SELECT * FROM signals ORDER BY fired_at DESC LIMIT %s
-                    ) sub ORDER BY fired_at ASC
-                """, (limit,))
-                rows = cur.fetchall()
-        return [_row_to_signal(r) for r in rows]
-    except Exception as exc:
-        logger.error(f"DB load_signals failed: {exc}")
-        return []
 
 
 def load_scan_log(limit: int = 50) -> list[dict]:
@@ -319,28 +250,6 @@ def load_latest_portfolio() -> dict | None:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
-
-def _row_to_signal(row) -> dict:
-    return {
-        "ticker":          row["ticker"],
-        "composite_score": float(row["composite_score"] or 0),
-        "technical_score": float(row["technical_score"] or 0),
-        "sentiment_score": float(row["sentiment_score"] or 0),
-        "historical_score":float(row["historical_score"] or 0),
-        "sentiment_label": row["sentiment_label"] or "",
-        "top_headline":    row["top_headline"] or "",
-        "top_url":         row["top_url"] or "",
-        "rsi":             float(row["rsi"]) if row["rsi"] is not None else None,
-        "macd_cross":      bool(row["macd_cross"]),
-        "ema_reclaim":     bool(row["ema_reclaim"]),
-        "volume_ratio":    float(row["volume_ratio"] or 0),
-        "current_price":   float(row["current_price"] or 0),
-        "entry_low":       float(row["entry_low"] or 0),
-        "entry_high":      float(row["entry_high"] or 0),
-        "stop_loss":       float(row["stop_loss"] or 0),
-        "take_profit":     float(row["take_profit"] or 0),
-        "scan_time_label": row["scan_time_label"] or "",
-    }
 
 
 def _row_to_log(row) -> dict:

@@ -8,7 +8,7 @@ from alpaca.data.requests import StockBarsRequest, StockSnapshotRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.data.enums import DataFeed
 
-from config import ALPACA_API_KEY, ALPACA_API_SECRET, SIGNAL_THRESHOLD, retry_with_backoff
+from config import ALPACA_API_KEY, ALPACA_API_SECRET, retry_with_backoff
 from signals import get_technical_score
 from sentiment import get_sentiment_score
 
@@ -117,13 +117,8 @@ def get_composite_score(ticker: str) -> dict | None:
 
     logger.info(
         f"{ticker}: tech={tech_score:.3f} sent={sentiment_score:.3f} "
-        f"hist={historical_score:.3f} → composite={composite:.3f} "
-        f"(threshold {SIGNAL_THRESHOLD})"
+        f"hist={historical_score:.3f} → composite={composite:.3f}"
     )
-
-    if composite < SIGNAL_THRESHOLD:
-        logger.info(f"{ticker}: SKIP — composite {composite:.3f} < threshold {SIGNAL_THRESHOLD}")
-        return None
 
     stop_loss = round(current_price * 0.975, 2)
     # 2:1 risk/reward: stop is 2.5% down, take-profit is 5% up
