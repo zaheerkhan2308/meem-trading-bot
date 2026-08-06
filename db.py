@@ -4,6 +4,7 @@ All dashboard state (signals, scan log, trades, portfolio snapshots) is written 
 """
 import logging
 import os
+import time
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -25,7 +26,18 @@ if not _URL or _URL.startswith("/") or "/.s.PGSQL." in _URL:
 
 
 def _conn():
-    return psycopg2.connect(_URL)
+    # connect_timeout=30 gives Neon time to wake from cold start (can take 10-30 s).
+    # Retry up to 3 times with backoff in case the first attempt races the wakeup.
+    last_exc = None
+    for delay in (0, 5, 15):
+        try:
+            if delay:
+                time.sleep(delay)
+            return psycopg2.connect(_URL, connect_timeout=30)
+        except psycopg2.OperationalError as exc:
+            last_exc = exc
+            logger.warning(f"DB connect failed (retrying): {exc}")
+    raise last_exc
 
 
 # ── Schema ─────────────────────────────────────────────────────────────────

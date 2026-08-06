@@ -201,6 +201,7 @@ def main() -> None:
         id="scan_job",
         max_instances=1,
         coalesce=True,
+        misfire_grace_time=300,  # skip run if it's >5 min late (e.g. after OOM restart)
     )
     # Daily portfolio snapshot at 16:35 ET (after market close)
     scheduler.add_job(

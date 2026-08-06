@@ -29,6 +29,8 @@ def initialize_finbert() -> None:
         truncation=True,
         max_length=512,
         top_k=None,
+        device=-1,  # force CPU; avoids CUDA OOM on constrained hosts
+        model_kwargs={"low_cpu_mem_usage": True},
     )
     logger.info("FinBERT loaded successfully.")
 

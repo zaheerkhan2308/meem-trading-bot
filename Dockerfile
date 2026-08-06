@@ -11,6 +11,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 ENV TRANSFORMERS_CACHE=/app/model_cache
+ENV HF_HOME=/app/model_cache
+
+# Bake FinBERT into the image so runtime never needs to download it.
+# low_cpu_mem_usage loads weights one tensor at a time, keeping peak RAM below 2× model size.
+RUN python -c "\
+from transformers import AutoTokenizer, AutoModelForSequenceClassification; \
+AutoTokenizer.from_pretrained('ProsusAI/finbert'); \
+AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert', low_cpu_mem_usage=True)"
 
 # Railway injects PORT at runtime
 EXPOSE 8000
