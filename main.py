@@ -159,7 +159,6 @@ def main() -> None:
 
     dashboard.start_dashboard(host="0.0.0.0", port=PORT)
 
-    logger.info("Loading FinBERT — this may take 1-2 minutes on first run...")
     initialize_finbert()
 
     # Initialise trading engine

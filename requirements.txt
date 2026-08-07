@@ -15,13 +15,7 @@ pandas-ta==0.4.71b0
 # Historical data (backtester only)
 yfinance==0.2.66
 
-# NLP / FinBERT
-# For CPU-only torch (recommended, avoids 2GB CUDA download):
-#   pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
-#   then run: pip install -r requirements.txt
-transformers==4.46.3
-torch==2.7.1
-accelerate>=0.26.0
+# Sentiment via Finnhub API (no local model — removed FinBERT/torch to fix OOM)
 
 # Telegram
 python-telegram-bot==21.11.1
