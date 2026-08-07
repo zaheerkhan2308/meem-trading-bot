@@ -27,7 +27,7 @@ _data_client = StockHistoricalDataClient(ALPACA_API_KEY, ALPACA_API_SECRET)
 _trading_client = TradingClient(ALPACA_API_KEY, ALPACA_API_SECRET, paper=_PAPER)
 
 _SNAPSHOT_CHUNK = 500
-_PHASE_A_CANDIDATES = 50
+_PHASE_A_CANDIDATES = 100
 
 
 def _get_asset_universe() -> list[str]:
@@ -61,6 +61,7 @@ def _fetch_snapshots(symbols: list[str]) -> dict:
 
 def _phase_a_filter(snapshots: dict) -> list[dict]:
     candidates = []
+    n_no_bars = n_low_price = n_no_prev = 0
     for sym, snap in snapshots.items():
         try:
             latest_trade = snap.latest_trade
@@ -68,37 +69,32 @@ def _phase_a_filter(snapshots: dict) -> list[dict]:
             prev_bar = snap.prev_daily_bar
 
             if not latest_trade or not daily_bar or not prev_bar:
+                n_no_bars += 1
                 continue
 
             price = float(latest_trade.price or 0)
-            if price < 10.0:
+            if price < 5.0:
+                n_low_price += 1
                 continue
 
             day_vol = float(daily_bar.volume or 0)
             day_close = float(daily_bar.close or price)
             prev_close = float(prev_bar.close or 0)
             if prev_close <= 0:
+                n_no_prev += 1
                 continue
 
             pct_change = (day_close - prev_close) / prev_close * 100
 
-            # Spread: prefer bid/ask, fallback to daily range
+            # Spread filter: only apply when real bid/ask is available.
+            # IEX rarely provides quotes, so the daily-range fallback is skipped.
             quote = snap.latest_quote
             if quote and quote.ask_price and quote.bid_price and float(quote.bid_price) > 0:
                 ask = float(quote.ask_price)
                 bid = float(quote.bid_price)
-                mid = (ask + bid) / 2
-                spread = (ask - bid) / mid
-            elif daily_bar.high and daily_bar.low:
-                hi = float(daily_bar.high)
-                lo = float(daily_bar.low)
-                mid = (hi + lo) / 2
-                spread = (hi - lo) / mid if mid > 0 else 1.0
-            else:
-                continue
-
-            if spread > 0.005:
-                continue
+                spread = (ask - bid) / ((ask + bid) / 2)
+                if spread > 0.02:  # relaxed from 0.5% to 2% for testing
+                    continue
 
             candidates.append(
                 {
@@ -114,7 +110,11 @@ def _phase_a_filter(snapshots: dict) -> list[dict]:
 
     candidates.sort(key=lambda x: x["raw_score"], reverse=True)
     top = candidates[:_PHASE_A_CANDIDATES]
-    logger.info(f"Phase A: {len(candidates)} passed filters, keeping top {len(top)}")
+    logger.info(
+        f"Phase A: {len(snapshots)} snapshots → missing bars={n_no_bars}, "
+        f"price<$5={n_low_price}, no prev_close={n_no_prev}, "
+        f"passed={len(candidates)}, keeping top {len(top)}"
+    )
     return top
 
 
@@ -134,19 +134,30 @@ def _phase_b_filter(candidates: list[dict]) -> list[str]:
     daily_bars = retry_with_backoff(lambda: _data_client.get_stock_bars(req))
 
     qualified = []
+    n_no_bars = n_low_vol_ratio = 0
     for c in candidates:
         sym = c["symbol"]
         try:
             bars_df = daily_bars[sym].df if hasattr(daily_bars[sym], "df") else None
             if bars_df is None or bars_df.empty:
+                n_no_bars += 1
+                logger.debug(f"Phase B {sym}: no historical bars")
                 continue
 
             avg_vol = float(bars_df["volume"].mean())
             if avg_vol <= 0:
+                n_no_bars += 1
                 continue
 
             volume_ratio = c["day_volume"] / avg_vol
-            if volume_ratio < 1.5:
+            logger.debug(
+                f"Phase B {sym}: price=${c['price']:.2f} pct={c['pct_change']:.2f}% "
+                f"vol_ratio={volume_ratio:.2f} (day={c['day_volume']:.0f} avg={avg_vol:.0f})"
+            )
+            # Lowered from 1.5x — intraday partial volume is well below a full-day
+            # average, so 1.5x would never be reached mid-session.
+            if volume_ratio < 0.3:
+                n_low_vol_ratio += 1
                 continue
 
             qualified.append(
@@ -162,7 +173,10 @@ def _phase_b_filter(candidates: list[dict]) -> list[str]:
 
     qualified.sort(key=lambda x: x["final_score"], reverse=True)
     result = [q["symbol"] for q in qualified[:10]]
-    logger.info(f"Phase B: {len(qualified)} qualified, top 10: {result}")
+    logger.info(
+        f"Phase B: {len(candidates)} in → no_bars={n_no_bars}, "
+        f"low_vol_ratio={n_low_vol_ratio}, qualified={len(qualified)}, top 10: {result}"
+    )
     return result
 
 
