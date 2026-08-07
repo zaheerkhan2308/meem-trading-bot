@@ -9,6 +9,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetAssetsRequest
 from alpaca.trading.enums import AssetClass, AssetStatus
 
+import os
 from config import (
     ALPACA_API_KEY,
     ALPACA_API_SECRET,
@@ -17,8 +18,13 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
+_PAPER = not (
+    os.getenv("TRADING_MODE", "paper").lower() == "live"
+    and os.getenv("LIVE_TRADING_CONFIRMED", "").lower() == "yes_i_understand"
+)
+
 _data_client = StockHistoricalDataClient(ALPACA_API_KEY, ALPACA_API_SECRET)
-_trading_client = TradingClient(ALPACA_API_KEY, ALPACA_API_SECRET, paper=False)
+_trading_client = TradingClient(ALPACA_API_KEY, ALPACA_API_SECRET, paper=_PAPER)
 
 _SNAPSHOT_CHUNK = 500
 _PHASE_A_CANDIDATES = 50
