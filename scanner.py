@@ -172,10 +172,10 @@ def _phase_b_filter(candidates: list[dict]) -> list[str]:
             logger.debug(f"Phase B skip {sym}: {exc}")
 
     qualified.sort(key=lambda x: x["final_score"], reverse=True)
-    result = [q["symbol"] for q in qualified[:10]]
+    result = [q["symbol"] for q in qualified[:50]]
     logger.info(
         f"Phase B: {len(candidates)} in → no_bars={n_no_bars}, "
-        f"low_vol_ratio={n_low_vol_ratio}, qualified={len(qualified)}, top 10: {result}"
+        f"low_vol_ratio={n_low_vol_ratio}, qualified={len(qualified)}, top {len(result)}: {result}"
     )
     return result
 

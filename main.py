@@ -100,6 +100,35 @@ def _take_portfolio_snapshot() -> None:
         logger.error(f"Portfolio snapshot failed: {exc}")
 
 
+def _log_watchlist(candidates: list[dict]) -> None:
+    logger.info("=" * 70)
+    logger.info(f"WATCHLIST — top {len(candidates)} scored tickers this cycle")
+    logger.info(f"{'#':>3}  {'TICKER':<6}  {'SCORE':>5}  {'TECH%':>5} {'SENT%':>5} {'HIST%':>5}  {'RSI':>5} {'MACD':>4} {'EMA':>3} {'VOL':>5}  PRICE")
+    logger.info("-" * 70)
+    for i, c in enumerate(candidates, 1):
+        comp = c["composite_score"]
+        tech = c["technical_score"]
+        sent = c["sentiment_score"]
+        hist = c["historical_score"]
+        if comp > 0:
+            tech_pct = round(tech * 0.50 / comp * 100)
+            sent_pct = round(sent * 0.30 / comp * 100)
+            hist_pct = round(hist * 0.20 / comp * 100)
+        else:
+            tech_pct = sent_pct = hist_pct = 0
+        rsi  = f"{c['rsi']:.1f}" if c.get("rsi") is not None else "  --"
+        macd = "Y" if c.get("macd_cross") else "N"
+        ema  = "Y" if c.get("ema_reclaim") else "N"
+        vol  = f"{c.get('volume_ratio', 0):.1f}x"
+        flag = " <-- BUY" if comp >= BUY_THRESHOLD else ""
+        logger.info(
+            f"{i:>3}. {c['ticker']:<6}  {comp:.3f}  "
+            f"{tech_pct:>4}%  {sent_pct:>4}%  {hist_pct:>4}%  "
+            f"{rsi:>5} {macd:>4} {ema:>3} {vol:>5}  ${c['current_price']:.2f}{flag}"
+        )
+    logger.info("=" * 70)
+
+
 def run_scan() -> None:
     start_ts = time.time()
     logger.info("=== Scan cycle starting ===")
@@ -137,6 +166,9 @@ def run_scan() -> None:
                     logger.error(f"{ticker}: scoring error — {exc}")
 
         candidates.sort(key=lambda x: x["composite_score"], reverse=True)
+
+        if candidates:
+            _log_watchlist(candidates)
 
         elapsed = time.time() - start_ts
         logger.info(f"=== Scan complete in {elapsed:.1f}s — {len(candidates)} candidate(s) ===")
