@@ -62,6 +62,10 @@ class RiskManager:
 
     def reset_daily(self) -> None:
         self._realized_pnl = 0.0
-        if not self._kill_switch:
-            self._halt_reason = None
+        # Clear auto-triggered circuit breakers for the new trading day.
+        # Manual kill switches (set via dashboard) are preserved intentionally.
+        if self._kill_switch and self._halt_reason != "Manual kill switch":
+            self._kill_switch = False
+            logger.info(f"Circuit breaker cleared for new trading day (was: {self._halt_reason})")
+        self._halt_reason = None
         logger.info("Daily P&L reset")

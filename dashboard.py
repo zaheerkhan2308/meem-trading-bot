@@ -83,15 +83,20 @@ async def index():
 
 @_app.post("/api/kill-switch")
 async def api_kill_switch(request: _Request):
-    global _kill_switch
+    global _kill_switch, _circuit_breaker
     data = await request.json()
     _kill_switch = bool(data.get("active", False))
+    if not _kill_switch:
+        # Re-enabling: clear the circuit breaker banner so a page refresh
+        # doesn't re-show it and re-activate the kill switch in the UI.
+        _circuit_breaker = None
     if _engine_ref is not None:
         _engine_ref.risk.set_kill_switch(_kill_switch)
     _dispatch(_broadcast({
         "type": "control_state",
         "kill_switch": _kill_switch,
         "dry_run": _dry_run,
+        "circuit_breaker": _circuit_breaker,
     }))
     return {"ok": True, "kill_switch": _kill_switch}
 
@@ -172,6 +177,23 @@ def push_circuit_breaker(reason: str) -> None:
     _circuit_breaker = reason
     db.save_circuit_breaker_event(reason)
     _dispatch(_broadcast({"type": "circuit_breaker_alert", "reason": reason}))
+
+
+def restore_circuit_breaker() -> None:
+    """
+    Called from main.py after the engine is wired up.
+    Loads today's circuit breaker event from DB and restores halt state so that
+    a Railway redeploy mid-day doesn't silently re-enable trading after a halt.
+    """
+    global _circuit_breaker
+    reason = db.load_todays_circuit_breaker()
+    if reason:
+        _circuit_breaker = reason
+        if _engine_ref is not None:
+            _engine_ref.risk.set_kill_switch(True)
+        logger.warning(f"Startup: restoring today's circuit breaker from DB — {reason}")
+    else:
+        logger.info("Startup: no circuit breaker event for today — starting unhalted")
 
 
 def set_engine(engine) -> None:
@@ -737,6 +759,9 @@ function connect() {
       applyCircuitBreaker(msg.reason);
     } else if (msg.type === 'control_state') {
       applyControls(msg.kill_switch, msg.dry_run);
+      if (!msg.circuit_breaker) {
+        document.getElementById('cb-banner').style.display = 'none';
+      }
     }
   };
 }

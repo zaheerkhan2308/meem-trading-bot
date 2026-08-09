@@ -212,6 +212,9 @@ def main() -> None:
     _engine.register_trade_callback(dashboard.push_trade)
     dashboard.set_engine(_engine)
 
+    # Restore today's circuit breaker state (survives Railway redeploys)
+    dashboard.restore_circuit_breaker()
+
     # Initial portfolio read
     _update_portfolio()
 

@@ -224,6 +224,23 @@ def load_portfolio_snapshots(days: int = 365) -> list[dict]:
         return []
 
 
+def load_todays_circuit_breaker() -> str | None:
+    """Return the most recent circuit breaker reason from today, or None."""
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT reason FROM circuit_breaker_events
+                    WHERE timestamp AT TIME ZONE 'America/New_York' >= CURRENT_DATE
+                    ORDER BY timestamp DESC LIMIT 1
+                """)
+                row = cur.fetchone()
+        return row[0] if row else None
+    except Exception as exc:
+        logger.error(f"DB load_todays_circuit_breaker failed: {exc}")
+        return None
+
+
 def load_latest_portfolio() -> dict | None:
     """Return the most recent portfolio snapshot as a partial portfolio dict."""
     try:

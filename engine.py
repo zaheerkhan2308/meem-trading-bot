@@ -44,7 +44,11 @@ class TradingEngine:
 
     def process_signals(self, signals: list[dict], scan_time: str) -> None:
         if self.risk.is_halted():
-            logger.warning("Engine halted — skipping signal processing")
+            logger.warning(
+                f"Engine halted — skipping signal processing | "
+                f"reason='{self.risk.halt_reason or 'unknown'}' | "
+                f"realized_pnl_today=${self.risk.realized_pnl:+.2f}"
+            )
             return
 
         try:
