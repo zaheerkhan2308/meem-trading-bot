@@ -1,0 +1,317 @@
+AI-POWERED TRADING SIGNAL BOT — FULL SYSTEM SPECIFICATION
+==========================================================
+
+WHAT IT IS
+----------
+An automated Python stock trading bot that runs 24/7 on Railway (cloud), scans the
+entire US equity market every 10 minutes during trading hours, identifies momentum
+opportunities using three analysis layers, then autonomously executes buy and sell
+orders on an Alpaca paper trading account.
+
+
+CORE LOOP — EVERY 10 MINUTES
+-----------------------------
+APScheduler triggers a scan at market open and repeats every 10 minutes until 4:00 PM ET.
+The NYSE calendar is checked first — if the market is closed, the scan is skipped entirely.
+If open, the following pipeline runs:
+
+
+STAGE 1 — MARKET SCANNER (scanner.py)
+--------------------------------------
+
+Phase A — Snapshot Filter (all ~10,000 US stocks):
+
+1. Fetches every active, tradable US equity symbol from Alpaca (no ETFs with slashes,
+   no preferred shares with dots, symbol <= 5 chars).
+2. Pulls real-time snapshots via the Alpaca IEX data feed in batches of 500.
+3. Each snapshot is filtered:
+   - Must have a latest trade, today's bar, and yesterday's bar — otherwise skip.
+   - Price must be >= $5 — eliminates penny stocks.
+   - If bid/ask is available, spread must be <= 2% — filters illiquid stocks.
+4. Each passing stock is scored by: abs(% change today) x today's volume
+   — pure momentum x market interest.
+5. Top 100 by that score advance to Phase B.
+
+Phase B — Historical Volume Filter (top 100):
+
+1. Fetches 20-day daily bar history for all 100 symbols.
+2. Compares today's intraday volume to the 20-day average — ratio must be >= 0.3
+   (at least 30% of a normal full day's volume already traded, showing real activity).
+3. Sorts by (% change x volume ratio), keeps the top 50 tickers.
+
+Note on the 0.3x volume threshold: the scanner runs intraday, so today's partial
+volume is always well below a full day's 20-day average. A threshold of 1.5x would
+reject every stock mid-session. 0.3x filters genuinely dead stocks while passing
+anything with real activity.
+
+
+STAGE 2 — DEEP SCORING (scorer.py, signals.py, sentiment.py)
+-------------------------------------------------------------
+Up to 50 tickers from Phase B are scored in parallel across 5 worker threads. Each
+ticker gets three sub-scores combined into a single composite score (0.0 to 1.0).
+
+--- Technical Score — 50% of composite (signals.py) ---
+
+Fetches the last 60 x 1-minute bars (3 hours of data) from Alpaca IEX and runs four
+indicators:
+
+  RSI(14) — 35% weight:
+    Score added if RSI is between 28 and 55. This range means the stock has momentum
+    but is not yet overbought. RSI above 55 is considered extended.
+
+  MACD Crossover — 35% weight:
+    Checks if the MACD line crossed above the signal line within the last 3 bars.
+    A bullish crossover signals building upward momentum.
+
+  EMA-20 Reclaim — 20% weight:
+    Checks if the price crossed back above the 20-period exponential moving average
+    within the last 3 bars. A reclaim of EMA-20 is a classic trend continuation signal.
+
+  Volume Spike — 10% weight:
+    Current bar's volume > 2x the average of the last 20 bars — signals unusual
+    buying pressure.
+
+--- Sentiment Score — 30% of composite (sentiment.py) ---
+
+Calls the Finnhub news-sentiment API, which returns a bullishPercent (0 to 1) based
+on recent news coverage for that ticker.
+
+  Labels:
+    BULLISH  — bullishPercent >= 0.65
+    BEARISH  — bullishPercent <= 0.35
+    NEUTRAL  — everything in between
+
+  If no data is available, defaults to 0.5 neutral — missing news does not kill the signal.
+
+--- Historical Score — 20% of composite (scorer.py) ---
+
+Fetches up to 252 days of daily bars (1 year) to find the 52-week high and low.
+Scores the stock based on how far it has pulled back from its 52-week high:
+
+  < 5% from 52w high    -> 0.40  (too extended, risky entry)
+  5% - 30% from high    -> 0.60 to 1.00  (sweet spot — healthy pullback, room to run)
+  30% - 55% from high   -> 0.60 fading to 0.0  (weakening trend)
+  > 55% from high       -> 0.0  (broken stock, avoid entirely)
+
+--- Composite Formula ---
+
+  Composite = (Technical x 0.50) + (Sentiment x 0.30) + (Historical x 0.20)
+
+--- Per-signal trade levels calculated ---
+
+  Entry range:  current price +/- 0.2%
+  Stop loss:    2.5% below current price
+  Take profit:  5.0% above current price
+  Risk/Reward:  2:1
+
+
+WATCHLIST LOG (market hours only)
+----------------------------------
+After every scoring pass, the bot logs a formatted table of ALL scored tickers
+sorted by composite score — regardless of whether they qualify for trading. This
+runs during market hours only (already inside the market-open gate).
+
+Log format per ticker:
+  Rank  Ticker  Composite  TECH%  SENT%  HIST%  RSI  MACD  EMA  VolRatio  Price  [<-- BUY]
+
+  TECH% / SENT% / HIST% show what fraction of the composite score each component
+  contributed (always sums to 100%). Tickers that clear the 0.72 buy threshold are
+  flagged with "<-- BUY". This log is written to trading_bot.log and streamed to
+  the Railway dashboard log view.
+
+The top 10 tickers from each scan are also saved to the watchlist_log database
+table and displayed in real time on the web dashboard (see WEB DASHBOARD and
+PERSISTENCE sections below). Data is retained for 7 days, then auto-deleted.
+
+
+STAGE 3 — TRADING ENGINE (engine.py)
+-------------------------------------
+
+If the engine is halted (circuit breaker or kill switch), it logs the halt reason
+and today's realized P&L, then skips the entire cycle without touching positions.
+
+Exit decisions (checked every scan for all open positions):
+
+  Stop-loss triggered:
+    If position P&L is <= -6%, close the position immediately.
+
+  Disappeared from scan:
+    If a held stock does not appear in this cycle's top movers, close it.
+    The momentum that justified buying it is gone.
+
+  Score dropped:
+    If the composite score is now below 0.40, close the position.
+
+Entry decisions (for each scored stock above threshold):
+
+  - Composite score must be >= 0.72 to trigger a buy.
+  - No existing position in that stock.
+  - No pending open order for that stock.
+  - Position size = floor($100 / price) shares — max $100 per position
+    (configurable via MAX_POSITION_SIZE environment variable).
+  - Account must have sufficient cash to cover the order.
+
+All orders are market orders with DAY time-in-force, submitted via Alpaca.
+
+
+RISK MANAGEMENT (risk.py)
+--------------------------
+
+  Daily loss limit:
+    If total realized P&L for the day hits -$50, a circuit breaker fires and all
+    further trading is halted for the rest of the day. (Configurable via DAILY_LOSS_LIMIT.)
+
+  Daily profit target:
+    If realized P&L hits +$50, trading is also halted — locks in the day's gains.
+    (Configurable via DAILY_PROFIT_TARGET.)
+
+  Manual kill switch:
+    Can be toggled from the web dashboard at any time, instantly halting all orders.
+    Manual kill switches persist across daily resets (intentional — operator chose to halt).
+
+  Daily reset (4:35 PM ET):
+    The daily P&L counter resets to $0. Auto-triggered circuit breakers (loss limit /
+    profit target) are cleared so the next trading day starts unhalted. Manual kill
+    switches set via the dashboard are NOT cleared by the daily reset.
+
+  Circuit breaker state on startup:
+    On bot startup or Railway redeploy, the circuit_breaker_events table is queried
+    for any row from TODAY (in ET). If found, the halt is re-applied immediately —
+    a mid-day redeploy cannot silently re-enable trading after a breaker has fired.
+
+  Re-enabling via dashboard:
+    The "Re-enable" button on the circuit breaker banner clears both the kill switch
+    and the in-memory circuit breaker reason. A page refresh after re-enabling will
+    NOT re-show the banner.
+
+  Halt logging:
+    Every blocked scan cycle logs the halt reason and today's realized P&L:
+    "Engine halted — reason='Daily loss limit hit: $-51.20' | realized_pnl_today=$-51.20"
+
+
+BROKER LAYER (broker.py)
+-------------------------
+Thin wrapper around the Alpaca Trading API. Runs in paper trading mode by default.
+
+  Switching to live trading requires BOTH of the following environment variables:
+    TRADING_MODE=live
+    LIVE_TRADING_CONFIRMED=yes_i_understand
+
+  This is a deliberate double-lock to prevent accidental live order execution.
+
+  Dry-run mode (togglable from the dashboard): orders are logged but never actually
+  submitted, even in paper mode. Useful for observing what the engine would do
+  without any capital at risk.
+
+
+PERSISTENCE — NEON POSTGRESQL (db.py)
+--------------------------------------
+Every event is persisted to a serverless Neon PostgreSQL database with five tables:
+
+  scan_log:
+    Every scan cycle with timestamp, outcome, and qualifying tickers.
+
+  trades:
+    Every BUY and SELL with ticker, quantity, price, composite score, reason for
+    the action, realized P&L, and whether it was a dry-run.
+
+  portfolio_snapshots:
+    Daily end-of-day snapshot of total portfolio value, cash, and positions value.
+    Saved at 4:35 PM ET each trading day.
+
+  circuit_breaker_events:
+    Log of every time the daily loss limit or profit target was hit. Also read on
+    startup to restore halt state after a Railway redeploy (today's rows only).
+
+  watchlist_log:
+    Top 10 scored tickers from every scan cycle, stored as a JSONB array with
+    composite score, sub-scores, RSI, MACD/EMA signals, volume ratio, and price.
+    Rows older than 7 days are deleted automatically on each write. Read on
+    dashboard startup to pre-populate the watchlist section before the first
+    live scan arrives.
+
+
+WEB DASHBOARD (dashboard.py)
+------------------------------
+A web UI served on port 8000 (FastAPI + WebSocket, updates in real time) showing:
+
+  - Live portfolio value, cash, open positions, and daily P&L
+  - Watchlist — top 10 scored tickers from the latest scan, updated every cycle:
+      composite score with fill bar (green >= 0.72, orange >= 0.55, grey below)
+      Tech / Sent / Hist segmented contribution bar with percentages
+      RSI value (green if < 30, red if > 60)
+      MACD crossover and EMA-20 reclaim signals (Y/N badges)
+      Volume ratio (green if >= 2x)
+      Current price
+      BUY badge for tickers above the buy threshold
+  - Performance chart — equity curve with 1W / 1M / 3M / 1Y / ALL range selector
+  - Full trade history with composite scores, entry prices, reasons, and P&L
+  - Scan activity log with timestamps and qualifying tickers
+  - Kill switch toggle (immediately halts all trading)
+  - Dry-run toggle
+  - Circuit breaker status banner with Re-enable button
+  - Dark / light theme toggle
+  - Mobile responsive layout
+
+  To run the dashboard locally without starting the full bot:
+    python run_dashboard.py
+  This connects to Neon, hydrates from DB, and serves on http://localhost:8000.
+
+
+NOTIFICATIONS (notifier.py)
+----------------------------
+Sends a Telegram message to your private channel or chat on bot startup and shutdown.
+
+
+DEPLOYMENT
+----------
+  - Hosted on Railway (cloud server, ~$5/month)
+  - Deployed from GitHub — pushing to the main branch triggers an automatic redeploy
+  - All secrets stored as Railway environment variables (never in code)
+  - Logs written to trading_bot.log and also streamed to Railway's log dashboard
+
+
+APIS & SERVICES
+---------------
+  Alpaca        Market data (IEX feed) + paper/live trading execution    Free
+  Finnhub       News sentiment scores per ticker                         Free tier
+  Neon          Serverless PostgreSQL database                           Free tier
+  Railway       Cloud hosting and deployment                             ~$5/month
+  Telegram      Startup/shutdown notifications                           Free
+
+
+CONFIGURABLE ENVIRONMENT VARIABLES
+------------------------------------
+  ALPACA_API_KEY            Alpaca API key
+  ALPACA_API_SECRET         Alpaca API secret
+  FINNHUB_API_KEY           Finnhub API key
+  TELEGRAM_BOT_TOKEN        Telegram bot token
+  TELEGRAM_CHAT_ID          Telegram chat/channel ID
+  TRADING_MODE              "paper" (default) or "live"
+  LIVE_TRADING_CONFIRMED    Must be "yes_i_understand" to enable live trading
+  MAX_POSITION_SIZE         Max USD per position (default: $100)
+  BUY_THRESHOLD             Minimum composite score to buy (default: 0.72)
+  SELL_THRESHOLD            Score below which to sell (default: 0.40)
+  STOP_LOSS_PCT             Stop-loss percentage (default: 0.06 = 6%)
+  DAILY_LOSS_LIMIT          Daily loss circuit breaker in USD (default: $50)
+  DAILY_PROFIT_TARGET       Daily profit lock-in in USD (default: $50)
+  NEON_DATABASE_URL         Neon PostgreSQL connection string
+  PORT                      Dashboard web server port (default: 8000)
+
+
+FILE STRUCTURE
+--------------
+  main.py                    Entry point — scheduler, startup/shutdown orchestration
+  scanner.py                 Two-phase market scanner (Phase A snapshots, Phase B volume)
+  signals.py                 Technical indicator scoring (RSI, MACD, EMA-20, volume spike)
+  scorer.py                  Composite scorer — combines technical, sentiment, historical
+  sentiment.py               Finnhub news-sentiment API integration
+  engine.py                  Trading engine — buy/sell/hold decision logic
+  broker.py                  Alpaca API wrapper — order execution and account management
+  risk.py                    Daily P&L tracker, circuit breakers, kill switch
+  db.py                      Neon PostgreSQL persistence layer (5 tables)
+  dashboard.py               FastAPI + WebSocket web dashboard
+  notifier.py                Telegram notifications
+  config.py                  Environment variable loading and retry utility
+  backtester.py              Offline backtesting using historical bar data
+  run_dashboard.py           Standalone dashboard server (no bot/scanner required)
