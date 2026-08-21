@@ -169,6 +169,7 @@ def run_scan() -> None:
 
         if candidates:
             _log_watchlist(candidates)
+            dashboard.push_watchlist(candidates[:10], scan_time)
 
         elapsed = time.time() - start_ts
         logger.info(f"=== Scan complete in {elapsed:.1f}s — {len(candidates)} candidate(s) ===")

@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watchlist Section Preview — Meem Trading Bot</title>
+<script>
+  (function(){
+    var t = localStorage.getItem('meem-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:           #000000;
+  --bg2:          #1c1c1e;
+  --bg3:          #2c2c2e;
+  --bg4:          #3a3a3c;
+  --sep:          #38383a;
+  --label:        #ffffff;
+  --label2:       rgba(235,235,245,0.60);
+  --label3:       rgba(235,235,245,0.30);
+  --green:        #30d158;
+  --green-bg:     rgba(48,209,88,0.12);
+  --red:          #ff453a;
+  --red-bg:       rgba(255,69,58,0.12);
+  --blue:         #0a84ff;
+  --blue-bg:      rgba(10,132,255,0.12);
+  --orange:       #ff9f0a;
+  --orange-bg:    rgba(255,159,10,0.12);
+  --purple:       #bf5af2;
+  --purple-bg:    rgba(191,90,242,0.12);
+  --yellow:       #ffd60a;
+  --yellow-bg:    rgba(255,214,10,0.12);
+}
+
+body {
+  background: var(--bg);
+  color: var(--label);
+  font-family: -apple-system, "SF Pro Text", "SF Pro Display",
+               BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  padding: 28px;
+}
+
+/* ── Header ── */
+header {
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(20px);
+  border-bottom: 0.5px solid var(--sep);
+  padding: 10px 28px;
+  display: flex; align-items: center; justify-content: space-between;
+  margin: -28px -28px 28px;
+  min-height: 60px;
+}
+.hdr-title { font-size: 17px; font-weight: 600; }
+.hdr-sub   { font-size: 11px; color: var(--label3); margin-top: 2px; }
+
+.preview-tag {
+  background: var(--purple-bg); color: var(--purple);
+  font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 999px;
+  letter-spacing: 0.3px;
+}
+
+main { max-width: 1240px; margin: 0 auto; }
+
+/* ── Section layout ── */
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.section-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.8px; color: var(--label3);
+}
+.section-meta {
+  font-size: 11px; color: var(--label3); font-weight: 500;
+}
+
+/* ── Watchlist card ── */
+#watchlist-box {
+  background: var(--bg2);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+/* Column header row */
+.wl-header-row {
+  display: grid;
+  grid-template-columns: 32px 72px 80px 130px 52px 44px 44px 60px 80px 80px;
+  gap: 8px;
+  padding: 9px 18px;
+  border-bottom: 0.5px solid var(--sep);
+}
+.wl-col-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--label3);
+}
+.wl-col-label.right { text-align: right; }
+
+/* Data row */
+.wl-row {
+  display: grid;
+  grid-template-columns: 32px 72px 80px 130px 52px 44px 44px 60px 80px 80px;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 18px;
+  border-bottom: 0.5px solid var(--sep);
+  transition: background 0.15s;
+}
+.wl-row:last-child { border-bottom: none; }
+.wl-row:hover { background: rgba(128,128,128,0.06); }
+.wl-row.buy-signal { background: rgba(48,209,88,0.04); }
+.wl-row.buy-signal:hover { background: rgba(48,209,88,0.08); }
+
+/* Rank */
+.wl-rank {
+  font-size: 12px; color: var(--label3);
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace,"SF Mono",Menlo,monospace;
+  text-align: right;
+}
+
+/* Ticker */
+.wl-ticker {
+  font-size: 13px; font-weight: 700; color: var(--label);
+  letter-spacing: 0.2px;
+}
+
+/* Score bar + value */
+.wl-score-wrap {
+  display: flex; align-items: center; gap: 7px;
+}
+.wl-score-val {
+  font-size: 13px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace,"SF Mono",Menlo,monospace;
+  min-width: 38px;
+}
+.wl-score-bar-track {
+  flex: 1; height: 3px; background: var(--bg4); border-radius: 2px; overflow: hidden;
+}
+.wl-score-bar-fill {
+  height: 100%; border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+/* Score color thresholds */
+.score-high  { color: var(--green); }
+.score-mid   { color: var(--orange); }
+.score-low   { color: var(--label3); }
+.fill-high   { background: var(--green); }
+.fill-mid    { background: var(--orange); }
+.fill-low    { background: var(--label3); }
+
+/* Contribution bar: tech/sent/hist */
+.wl-contrib {
+  display: flex; height: 6px; border-radius: 3px; overflow: hidden; gap: 1px;
+  width: 100%;
+}
+.contrib-tech { background: var(--blue); border-radius: 2px 0 0 2px; }
+.contrib-sent { background: var(--purple); }
+.contrib-hist { background: var(--orange); border-radius: 0 2px 2px 0; }
+
+.contrib-wrap { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.contrib-labels {
+  display: flex; justify-content: space-between;
+  font-size: 9px; color: var(--label3); font-weight: 600; letter-spacing: 0.2px;
+}
+.cl-tech { color: var(--blue); }
+.cl-sent { color: var(--purple); }
+.cl-hist { color: var(--orange); }
+
+/* RSI */
+.wl-rsi {
+  font-size: 12px; font-variant-numeric: tabular-nums;
+  font-family: ui-monospace,"SF Mono",Menlo,monospace;
+  text-align: right; color: var(--label2);
+}
+.rsi-ok  { color: var(--green); }
+.rsi-hot { color: var(--red); }
+
+/* Signal badges */
+.sig-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 20px; border-radius: 5px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.3px;
+}
+.sig-y { background: var(--green-bg); color: var(--green); }
+.sig-n { background: rgba(120,120,128,0.10); color: var(--label3); }
+
+/* Volume */
+.wl-vol {
+  font-size: 12px; font-variant-numeric: tabular-nums;
+  font-family: ui-monospace,"SF Mono",Menlo,monospace;
+  text-align: right; color: var(--label2);
+}
+.vol-high { color: var(--green); }
+
+/* Price */
+.wl-price {
+  font-size: 12px; font-variant-numeric: tabular-nums;
+  font-family: ui-monospace,"SF Mono",Menlo,monospace;
+  text-align: right; color: var(--label2);
+}
+
+/* Buy flag */
+.wl-flag-wrap { display: flex; justify-content: flex-end; }
+.buy-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 6px;
+  background: var(--green-bg); color: var(--green);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.3px;
+}
+.buy-badge .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--green); }
+
+/* ── Light mode ── */
+[data-theme="light"] {
+  --bg: #f2f2f7; --bg2: #ffffff; --bg3: #e5e5ea; --bg4: #d1d1d6;
+  --sep: rgba(60,60,67,0.12); --label: #000000;
+  --label2: rgba(60,60,67,0.60); --label3: rgba(60,60,67,0.45);
+  --green: #34c759; --green-bg: rgba(52,199,89,0.16);
+  --red: #ff3b30; --red-bg: rgba(255,59,48,0.13);
+  --blue: #007aff; --blue-bg: rgba(0,122,255,0.13);
+  --orange: #ff9500; --orange-bg: rgba(255,149,0,0.14);
+  --purple: #af52de; --purple-bg: rgba(175,82,222,0.13);
+}
+[data-theme="light"] #watchlist-box {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 0 0 0.5px rgba(0,0,0,0.06);
+}
+[data-theme="light"] header { background: rgba(242,242,247,0.92); }
+[data-theme="light"] .wl-row:hover { background: rgba(0,0,0,0.035); }
+[data-theme="light"] .wl-row.buy-signal { background: rgba(52,199,89,0.05); }
+[data-theme="light"] .wl-row.buy-signal:hover { background: rgba(52,199,89,0.09); }
+
+/* ── Theme btn ── */
+#theme-btn {
+  width: 34px; height: 34px; border-radius: 50%; border: none;
+  background: rgba(235,235,245,0.08); color: var(--label2);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+#theme-btn svg { width: 16px; height: 16px; }
+
+/* ── Responsive ── */
+@media (max-width: 860px) {
+  .wl-header-row,
+  .wl-row {
+    grid-template-columns: 28px 60px 72px 1fr 44px 36px 36px 52px;
+  }
+  .wl-price { display: none; }
+  .wl-flag-wrap { display: none; }
+}
+@media (max-width: 600px) {
+  body { padding: 16px; }
+  .wl-header-row,
+  .wl-row { grid-template-columns: 24px 56px 66px 1fr 40px; gap: 6px; padding: 10px 14px; }
+  .wl-rsi, .wl-vol, .wl-macd, .wl-ema { display: none; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="hdr-title">Meem Trading Bot</div>
+    <div class="hdr-sub">Watchlist Section — Design Preview</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <span class="preview-tag">PREVIEW ONLY</span>
+    <button id="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme">
+      <svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg>
+    </button>
+  </div>
+</header>
+
+<main>
+  <div id="watchlist-section">
+
+    <div class="section-header">
+      <span class="section-label">Watchlist</span>
+      <span class="section-meta" id="wl-meta">Last scan Thu Aug 21 10:40 AM ET · 12 tickers scored</span>
+    </div>
+
+    <div id="watchlist-box">
+
+      <!-- Column headers -->
+      <div class="wl-header-row">
+        <span class="wl-col-label right">#</span>
+        <span class="wl-col-label">Ticker</span>
+        <span class="wl-col-label">Score</span>
+        <span class="wl-col-label">Tech / Sent / Hist</span>
+        <span class="wl-col-label right">RSI</span>
+        <span class="wl-col-label right">MACD</span>
+        <span class="wl-col-label right">EMA</span>
+        <span class="wl-col-label right">Vol</span>
+        <span class="wl-col-label right">Price</span>
+        <span class="wl-col-label right"></span>
+      </div>
+
+      <!-- Rows injected by JS below -->
+      <div id="wl-rows"></div>
+
+    </div>
+  </div>
+</main>
+
+<script>
+/* Mock watchlist data — same shape as real scanner output */
+var MOCK = [
+  { ticker:"NVDA", composite:0.847, tech:0.91, sent:0.78, hist:0.72, rsi:42.3, macd:true,  ema:true,  vol_ratio:2.8, price:127.54 },
+  { ticker:"TSLA", composite:0.783, tech:0.85, sent:0.72, hist:0.64, rsi:38.1, macd:true,  ema:true,  vol_ratio:2.1, price:187.20 },
+  { ticker:"AMD",  composite:0.741, tech:0.80, sent:0.68, hist:0.61, rsi:44.7, macd:true,  ema:false, vol_ratio:1.7, price:143.88 },
+  { ticker:"META", composite:0.718, tech:0.76, sent:0.71, hist:0.63, rsi:50.2, macd:false, ema:true,  vol_ratio:1.4, price:512.30 },
+  { ticker:"AAPL", composite:0.681, tech:0.70, sent:0.65, hist:0.68, rsi:48.9, macd:false, ema:true,  vol_ratio:1.2, price:214.50 },
+  { ticker:"PLTR", composite:0.654, tech:0.68, sent:0.62, hist:0.59, rsi:52.1, macd:true,  ema:false, vol_ratio:1.8, price:32.44 },
+  { ticker:"SOFI", composite:0.621, tech:0.64, sent:0.58, hist:0.55, rsi:46.3, macd:false, ema:false, vol_ratio:1.1, price:11.87 },
+  { ticker:"RIVN", composite:0.583, tech:0.58, sent:0.55, hist:0.50, rsi:55.7, macd:false, ema:false, vol_ratio:0.9, price:14.22 },
+  { ticker:"SMCI", composite:0.541, tech:0.54, sent:0.51, hist:0.48, rsi:58.3, macd:false, ema:false, vol_ratio:0.8, price:38.91 },
+  { ticker:"COIN", composite:0.498, tech:0.50, sent:0.48, hist:0.46, rsi:61.4, macd:false, ema:false, vol_ratio:0.7, price:211.34 },
+  { ticker:"GME",  composite:0.432, tech:0.42, sent:0.44, hist:0.40, rsi:66.2, macd:false, ema:false, vol_ratio:0.6, price:28.17 },
+  { ticker:"BBBY", composite:0.381, tech:0.36, sent:0.40, hist:0.38, rsi:72.1, macd:false, ema:false, vol_ratio:0.5, price:4.31  },
+];
+
+var BUY_THRESHOLD = 0.72;
+
+function scoreClass(s) {
+  return s >= BUY_THRESHOLD ? 'score-high' : s >= 0.55 ? 'score-mid' : 'score-low';
+}
+function fillClass(s) {
+  return s >= BUY_THRESHOLD ? 'fill-high' : s >= 0.55 ? 'fill-mid' : 'fill-low';
+}
+function rsiClass(rsi) {
+  if (rsi === null) return '';
+  return rsi < 30 ? 'rsi-ok' : rsi > 60 ? 'rsi-hot' : '';
+}
+function volClass(v) { return v >= 2.0 ? 'vol-high' : ''; }
+
+function renderRows() {
+  var container = document.getElementById('wl-rows');
+  container.innerHTML = '';
+
+  MOCK.forEach(function(d, i) {
+    var comp = d.composite;
+    var total = d.tech * 0.50 + d.sent * 0.30 + d.hist * 0.20;
+    var techPct = total > 0 ? Math.round(d.tech * 0.50 / total * 100) : 0;
+    var sentPct = total > 0 ? Math.round(d.sent * 0.30 / total * 100) : 0;
+    var histPct = 100 - techPct - sentPct;
+
+    var isBuy = comp >= BUY_THRESHOLD;
+
+    var row = document.createElement('div');
+    row.className = 'wl-row' + (isBuy ? ' buy-signal' : '');
+
+    row.innerHTML =
+      /* rank */
+      '<span class="wl-rank">' + (i+1) + '</span>'
+
+      /* ticker */
+      + '<span class="wl-ticker">$' + d.ticker + '</span>'
+
+      /* score + mini bar */
+      + '<span class="wl-score-wrap">'
+      +   '<span class="wl-score-val ' + scoreClass(comp) + '">' + comp.toFixed(3) + '</span>'
+      +   '<span class="wl-score-bar-track"><span class="wl-score-bar-fill ' + fillClass(comp) + '" style="width:' + (comp * 100).toFixed(0) + '%"></span></span>'
+      + '</span>'
+
+      /* contrib segmented bar */
+      + '<span class="contrib-wrap">'
+      +   '<span class="wl-contrib">'
+      +     '<span class="contrib-tech" style="width:' + techPct + '%"></span>'
+      +     '<span class="contrib-sent" style="width:' + sentPct + '%"></span>'
+      +     '<span class="contrib-hist" style="width:' + histPct + '%"></span>'
+      +   '</span>'
+      +   '<span class="contrib-labels">'
+      +     '<span class="cl-tech">T ' + techPct + '%</span>'
+      +     '<span class="cl-sent">S ' + sentPct + '%</span>'
+      +     '<span class="cl-hist">H ' + histPct + '%</span>'
+      +   '</span>'
+      + '</span>'
+
+      /* RSI */
+      + '<span class="wl-rsi ' + rsiClass(d.rsi) + '">' + (d.rsi !== null ? d.rsi.toFixed(1) : '—') + '</span>'
+
+      /* MACD */
+      + '<span class="wl-macd"><span class="sig-badge ' + (d.macd ? 'sig-y' : 'sig-n') + '">' + (d.macd ? 'Y' : 'N') + '</span></span>'
+
+      /* EMA */
+      + '<span class="wl-ema"><span class="sig-badge ' + (d.ema ? 'sig-y' : 'sig-n') + '">' + (d.ema ? 'Y' : 'N') + '</span></span>'
+
+      /* Volume ratio */
+      + '<span class="wl-vol ' + volClass(d.vol_ratio) + '">' + d.vol_ratio.toFixed(1) + 'x</span>'
+
+      /* Price */
+      + '<span class="wl-price">$' + d.price.toFixed(2) + '</span>'
+
+      /* BUY flag */
+      + '<span class="wl-flag-wrap">'
+      + (isBuy ? '<span class="buy-badge"><span class="dot"></span>BUY</span>' : '')
+      + '</span>';
+
+    container.appendChild(row);
+  });
+}
+
+renderRows();
+
+/* ── Theme ── */
+var MOON = 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z';
+var SUN  = ['M12 3v1','M12 20v1','M4.22 4.22l.71.71','M18.36 18.36l.71.71','M3 12h1','M20 12h1','M4.93 19.07l.71-.71','M18.36 5.64l.71-.71'];
+
+function setThemeIcon(t) {
+  var svg = document.getElementById('theme-icon');
+  svg.innerHTML = t === 'light'
+    ? '<path d="'+MOON+'"/>'
+    : SUN.map(function(d){ return '<path d="'+d+'"/>'; }).join('') + '<circle cx="12" cy="12" r="4"/>';
+}
+function toggleTheme() {
+  var cur = document.documentElement.getAttribute('data-theme');
+  var next = cur === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('meem-theme', next);
+  setThemeIcon(next);
+}
+setThemeIcon(document.documentElement.getAttribute('data-theme') || 'dark');
+</script>
+</body>
+</html>

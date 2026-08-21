@@ -39,6 +39,7 @@ _portfolio: dict = {
 _kill_switch: bool = False
 _dry_run: bool = False
 _circuit_breaker: str | None = None
+_watchlist: dict = {"scan_time": None, "tickers": []}
 _engine_ref = None
 _loop: asyncio.AbstractEventLoop | None = None
 
@@ -65,6 +66,7 @@ async def ws_endpoint(websocket: WebSocket):
             "kill_switch":     _kill_switch,
             "dry_run":         _dry_run,
             "circuit_breaker": _circuit_breaker,
+            "watchlist":       _watchlist,
         })
         while True:
             await websocket.receive_text()
@@ -179,6 +181,13 @@ def push_circuit_breaker(reason: str) -> None:
     _dispatch(_broadcast({"type": "circuit_breaker_alert", "reason": reason}))
 
 
+def push_watchlist(candidates: list[dict], scan_time: str) -> None:
+    global _watchlist
+    _watchlist = {"scan_time": scan_time, "tickers": candidates}
+    db.save_watchlist(scan_time, candidates)
+    _dispatch(_broadcast({"type": "watchlist_update", "watchlist": _watchlist}))
+
+
 def restore_circuit_breaker() -> None:
     """
     Called from main.py after the engine is wired up.
@@ -220,6 +229,10 @@ def start_dashboard(host: str = "0.0.0.0", port: int = 8000) -> None:
     latest_pf = db.load_latest_portfolio()
     if latest_pf:
         _portfolio.update(latest_pf)
+
+    latest_wl = db.load_watchlist()
+    if latest_wl:
+        _watchlist.update(latest_wl)
 
     logger.info(
         f"Loaded {len(_scan_log)} log entries, {len(_trades)} trade(s) from DB"
@@ -593,6 +606,65 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
   .log-row { grid-template-columns: 100px 1fr; }
   .log-time { display: none; }
 }
+
+/* ── Watchlist ── */
+#watchlist-section { margin-bottom: 28px; }
+.wl-scan-meta { font-size: 11px; color: var(--label3); font-weight: 500; }
+#watchlist-box { background: var(--bg2); border-radius: 16px; overflow: hidden; }
+#watchlist-empty { padding: 28px 20px; text-align: center; font-size: 13px; color: var(--label3); }
+
+.wl-header-row,
+.wl-row {
+  display: grid;
+  grid-template-columns: 28px 66px 86px 140px 48px 40px 40px 56px 80px 74px;
+  gap: 8px; padding: 9px 18px; align-items: center;
+}
+.wl-header-row { border-bottom: 0.5px solid var(--sep); }
+.wl-col-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--label3); }
+.wl-col-label.right { text-align: right; }
+.wl-row { border-bottom: 0.5px solid var(--sep); transition: background 0.15s; }
+.wl-row:last-child { border-bottom: none; }
+.wl-row:hover { background: rgba(128,128,128,0.06); }
+.wl-row.buy-signal { background: rgba(48,209,88,0.04); }
+.wl-row.buy-signal:hover { background: rgba(48,209,88,0.08); }
+
+.wl-rank { font-size:12px; color:var(--label3); font-variant-numeric:tabular-nums; font-family:ui-monospace,"SF Mono",Menlo,monospace; text-align:right; }
+.wl-ticker { font-size:13px; font-weight:700; }
+.wl-score-wrap { display:flex; align-items:center; gap:6px; }
+.wl-score-val { font-size:13px; font-weight:700; font-variant-numeric:tabular-nums; font-family:ui-monospace,"SF Mono",Menlo,monospace; min-width:38px; }
+.wl-score-bar-track { flex:1; height:3px; background:var(--bg4); border-radius:2px; overflow:hidden; }
+.wl-score-bar-fill { height:100%; border-radius:2px; }
+.score-high { color:var(--green); } .score-mid { color:var(--orange); } .score-low { color:var(--label3); }
+.fill-high { background:var(--green); } .fill-mid { background:var(--orange); } .fill-low { background:var(--label3); }
+.contrib-wrap { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.wl-contrib { display:flex; height:5px; border-radius:3px; overflow:hidden; gap:1px; }
+.contrib-tech { background:var(--blue); } .contrib-sent { background:var(--purple); } .contrib-hist { background:var(--orange); }
+.contrib-labels { display:flex; justify-content:space-between; font-size:9px; font-weight:600; }
+.cl-tech { color:var(--blue); } .cl-sent { color:var(--purple); } .cl-hist { color:var(--orange); }
+.wl-rsi { font-size:12px; font-variant-numeric:tabular-nums; font-family:ui-monospace,"SF Mono",Menlo,monospace; text-align:right; color:var(--label2); }
+.rsi-ok { color:var(--green); } .rsi-hot { color:var(--red); }
+.sig-badge { display:inline-flex; align-items:center; justify-content:center; width:26px; height:18px; border-radius:5px; font-size:10px; font-weight:700; }
+.sig-y { background:var(--green-bg); color:var(--green); } .sig-n { background:rgba(120,120,128,0.10); color:var(--label3); }
+.wl-vol { font-size:12px; font-variant-numeric:tabular-nums; font-family:ui-monospace,"SF Mono",Menlo,monospace; text-align:right; color:var(--label2); }
+.vol-high { color:var(--green); }
+.wl-price { font-size:12px; font-variant-numeric:tabular-nums; font-family:ui-monospace,"SF Mono",Menlo,monospace; text-align:right; color:var(--label2); }
+.wl-flag { display:flex; justify-content:flex-end; }
+.buy-badge { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:6px; background:var(--green-bg); color:var(--green); font-size:10px; font-weight:700; letter-spacing:0.3px; }
+.buy-badge .dot { width:4px; height:4px; border-radius:50%; background:var(--green); animation:pulse 1.5s infinite; }
+
+[data-theme="light"] #watchlist-box { box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 0 0 0.5px rgba(0,0,0,0.06); }
+[data-theme="light"] .wl-row.buy-signal { background: rgba(52,199,89,0.05); }
+[data-theme="light"] .wl-row.buy-signal:hover { background: rgba(52,199,89,0.09); }
+[data-theme="light"] .wl-row:hover { background: rgba(0,0,0,0.035); }
+
+@media (max-width: 860px) {
+  .wl-header-row, .wl-row { grid-template-columns: 24px 58px 78px 1fr 44px 36px 36px; }
+  .wl-vol, .wl-price, .wl-flag { display: none; }
+}
+@media (max-width: 560px) {
+  .wl-header-row, .wl-row { grid-template-columns: 20px 54px 70px 1fr 40px; }
+  .wl-rsi, .wl-macd, .wl-ema { display: none; }
+}
 </style>
 </head>
 <body>
@@ -664,6 +736,17 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
   <div id="statusbar">
     <span><span id="wsdot"></span><span id="ws-lbl">Connecting…</span></span>
     <span>Scans every 10 min · Market hours only</span>
+  </div>
+
+  <!-- Watchlist -->
+  <div id="watchlist-section">
+    <div class="section-header">
+      <span class="section-label">Watchlist</span>
+      <span class="wl-scan-meta" id="wl-meta">Waiting for first scan…</span>
+    </div>
+    <div id="watchlist-box">
+      <div id="watchlist-empty">No watchlist data yet</div>
+    </div>
   </div>
 
   <!-- Performance Chart -->
@@ -745,6 +828,7 @@ function connect() {
       if (msg.circuit_breaker) applyCircuitBreaker(msg.circuit_breaker);
       (msg.scan_log || []).forEach(function(e){ addLogEntry(e, false); });
       (msg.trades || []).forEach(function(t){ addTrade(t, false); });
+      if (msg.watchlist && msg.watchlist.tickers && msg.watchlist.tickers.length) renderWatchlist(msg.watchlist);
     } else if (msg.type === 'scan_complete' || msg.type === 'status') {
       applyStatus(msg.status);
       if (msg.log_entry) addLogEntry(msg.log_entry, true);
@@ -757,6 +841,8 @@ function connect() {
       addTrade(msg.trade, true);
     } else if (msg.type === 'circuit_breaker_alert') {
       applyCircuitBreaker(msg.reason);
+    } else if (msg.type === 'watchlist_update') {
+      renderWatchlist(msg.watchlist);
     } else if (msg.type === 'control_state') {
       applyControls(msg.kill_switch, msg.dry_run);
       if (!msg.circuit_breaker) {
@@ -973,6 +1059,79 @@ function addTrade(t, prepend) {
   } else {
     box.appendChild(row);
   }
+}
+
+/* ═══════════════════════ Watchlist ═══════════════════════ */
+var _buyThreshold = 0.72;
+
+function renderWatchlist(data) {
+  if (!data || !data.tickers || !data.tickers.length) return;
+  var box = document.getElementById('watchlist-box');
+  var meta = document.getElementById('wl-meta');
+  if (data.scan_time) {
+    meta.textContent = 'Last scan ' + data.scan_time + ' · Top ' + data.tickers.length;
+  }
+
+  box.innerHTML =
+    '<div class="wl-header-row">'
+    + '<span class="wl-col-label right">#</span>'
+    + '<span class="wl-col-label">Ticker</span>'
+    + '<span class="wl-col-label">Score</span>'
+    + '<span class="wl-col-label">Tech / Sent / Hist</span>'
+    + '<span class="wl-col-label right">RSI</span>'
+    + '<span class="wl-col-label right wl-macd">MACD</span>'
+    + '<span class="wl-col-label right wl-ema">EMA</span>'
+    + '<span class="wl-col-label right wl-vol">Vol</span>'
+    + '<span class="wl-col-label right wl-price">Price</span>'
+    + '<span class="wl-col-label wl-flag"></span>'
+    + '</div>';
+
+  data.tickers.forEach(function(d, i) {
+    var comp = d.composite_score || 0;
+    var tech = d.technical_score  || 0;
+    var sent = d.sentiment_score  || 0;
+    var hist = d.historical_score || 0;
+    var total = tech * 0.50 + sent * 0.30 + hist * 0.20;
+    var techPct = total > 0 ? Math.round(tech * 0.50 / total * 100) : 0;
+    var sentPct = total > 0 ? Math.round(sent * 0.30 / total * 100) : 0;
+    var histPct = 100 - techPct - sentPct;
+    var isBuy = comp >= _buyThreshold;
+    var rsi = d.rsi;
+    var rsiCls = (rsi != null) ? (rsi < 30 ? 'rsi-ok' : rsi > 60 ? 'rsi-hot' : '') : '';
+    var vol = d.volume_ratio || 0;
+    var scoreCls = comp >= _buyThreshold ? 'score-high' : comp >= 0.55 ? 'score-mid' : 'score-low';
+    var fillCls  = comp >= _buyThreshold ? 'fill-high'  : comp >= 0.55 ? 'fill-mid'  : 'fill-low';
+
+    var row = document.createElement('div');
+    row.className = 'wl-row' + (isBuy ? ' buy-signal' : '');
+    row.innerHTML =
+      '<span class="wl-rank">' + (i + 1) + '</span>'
+      + '<span class="wl-ticker">$' + d.ticker + '</span>'
+      + '<span class="wl-score-wrap">'
+      +   '<span class="wl-score-val ' + scoreCls + '">' + comp.toFixed(3) + '</span>'
+      +   '<span class="wl-score-bar-track"><span class="wl-score-bar-fill ' + fillCls + '" style="width:' + (comp * 100).toFixed(0) + '%"></span></span>'
+      + '</span>'
+      + '<span class="contrib-wrap">'
+      +   '<span class="wl-contrib">'
+      +     '<span class="contrib-tech" style="width:' + techPct + '%"></span>'
+      +     '<span class="contrib-sent" style="width:' + sentPct + '%"></span>'
+      +     '<span class="contrib-hist" style="width:' + histPct + '%"></span>'
+      +   '</span>'
+      +   '<span class="contrib-labels">'
+      +     '<span class="cl-tech">T ' + techPct + '%</span>'
+      +     '<span class="cl-sent">S ' + sentPct + '%</span>'
+      +     '<span class="cl-hist">H ' + histPct + '%</span>'
+      +   '</span>'
+      + '</span>'
+      + '<span class="wl-rsi ' + rsiCls + '">' + (rsi != null ? rsi.toFixed(1) : '—') + '</span>'
+      + '<span class="wl-macd"><span class="sig-badge ' + (d.macd_cross  ? 'sig-y' : 'sig-n') + '">' + (d.macd_cross  ? 'Y' : 'N') + '</span></span>'
+      + '<span class="wl-ema"><span class="sig-badge '  + (d.ema_reclaim ? 'sig-y' : 'sig-n') + '">' + (d.ema_reclaim ? 'Y' : 'N') + '</span></span>'
+      + '<span class="wl-vol ' + (vol >= 2.0 ? 'vol-high' : '') + '">' + vol.toFixed(1) + 'x</span>'
+      + '<span class="wl-price">$' + (d.current_price || 0).toFixed(2) + '</span>'
+      + '<span class="wl-flag">' + (isBuy ? '<span class="buy-badge"><span class="dot"></span>BUY</span>' : '') + '</span>';
+
+    box.appendChild(row);
+  });
 }
 
 /* ═══════════════════════ Theme ═══════════════════════ */

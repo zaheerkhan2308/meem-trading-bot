@@ -86,6 +86,14 @@ def init_tables() -> None:
                     reason      TEXT
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS watchlist_log (
+                    id          SERIAL PRIMARY KEY,
+                    scanned_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    scan_time   VARCHAR(60),
+                    tickers     JSONB NOT NULL DEFAULT '[]'
+                )
+            """)
         conn.commit()
     logger.info("DB tables ready")
 
@@ -267,6 +275,43 @@ def load_latest_portfolio() -> dict | None:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def save_watchlist(scan_time: str, tickers: list[dict]) -> None:
+    import json
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO watchlist_log (scan_time, tickers)
+                    VALUES (%s, %s::jsonb)
+                """, (scan_time, json.dumps(tickers)))
+                cur.execute("DELETE FROM watchlist_log WHERE scanned_at < NOW() - INTERVAL '7 days'")
+            conn.commit()
+    except Exception as exc:
+        logger.error(f"DB save_watchlist failed: {exc}")
+
+
+def load_watchlist() -> dict | None:
+    """Return the most recent watchlist snapshot (top 10 tickers)."""
+    import json
+    try:
+        with _conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT scan_time, tickers FROM watchlist_log
+                    ORDER BY scanned_at DESC LIMIT 1
+                """)
+                row = cur.fetchone()
+        if row:
+            tickers = row["tickers"]
+            if isinstance(tickers, str):
+                tickers = json.loads(tickers)
+            return {"scan_time": row["scan_time"], "tickers": list(tickers or [])}
+        return None
+    except Exception as exc:
+        logger.error(f"DB load_watchlist failed: {exc}")
+        return None
 
 
 def _row_to_log(row) -> dict:
