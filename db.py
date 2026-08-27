@@ -319,7 +319,7 @@ def _row_to_log(row) -> dict:
         "time": row["scan_time_label"] or str(row["scanned_at"]),
         "type": row["event_type"],
     }
-    if row["event_type"] == "signals":
+    if row["event_type"] == "scan":
         entry["count"]   = row["signal_count"] or 0
         entry["tickers"] = list(row["tickers"] or [])
     return entry

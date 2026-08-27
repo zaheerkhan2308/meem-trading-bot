@@ -124,6 +124,15 @@ async def api_chart():
     return JSONResponse({"snapshots": snapshots})
 
 
+@_app.post("/inject")
+async def api_inject(request: _Request):
+    """Inject mock watchlist data for local testing (used by mock_signal.py)."""
+    candidates = await request.json()
+    scan_time = _now_et()
+    push_watchlist(candidates[:10], scan_time)
+    return {"ok": True, "injected": len(candidates)}
+
+
 # ── Broadcast helpers ──────────────────────────────────────────────────────
 
 async def _broadcast(message: dict) -> None:
