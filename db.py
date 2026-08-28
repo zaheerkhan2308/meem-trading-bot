@@ -110,6 +110,7 @@ def save_scan_log(scan_time: str, event_type: str,
                     INSERT INTO scan_log (scan_time_label, event_type, signal_count, tickers)
                     VALUES (%s, %s, %s, %s)
                 """, (scan_time, event_type, signal_count, tickers or []))
+                cur.execute("DELETE FROM scan_log WHERE scanned_at < NOW() - INTERVAL '2 days'")
             conn.commit()
     except Exception as exc:
         logger.error(f"DB save_scan_log failed: {exc}")

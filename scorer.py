@@ -28,14 +28,14 @@ def _get_current_price(ticker: str) -> float:
 
 def _get_52w_range(ticker: str) -> tuple[float, float]:
     now = datetime.now(timezone.utc)
+    yesterday = now - timedelta(days=1)
     start = now - timedelta(days=365)
     req = StockBarsRequest(
         symbol_or_symbols=ticker,
         timeframe=TimeFrame.Day,
         start=start,
-        end=now,
+        end=yesterday,
         limit=252,
-        feed=DataFeed.IEX,
     )
     bars = retry_with_backoff(lambda: _data_client.get_stock_bars(req))
     df = bars.df

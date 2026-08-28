@@ -15,6 +15,7 @@ from config import (
     ALPACA_API_SECRET,
     retry_with_backoff,
 )
+from universe import SP500
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +41,9 @@ def _get_asset_universe() -> list[str]:
         a.symbol
         for a in assets
         if a.tradable
-        and "/" not in a.symbol
-        and "." not in a.symbol
-        and len(a.symbol) <= 5
+        and a.symbol in SP500
     ]
-    logger.info(f"Asset universe: {len(symbols)} tradeable US equities")
+    logger.info(f"Asset universe: {len(symbols)} S&P 500 equities")
     return symbols
 
 
@@ -116,15 +115,15 @@ def _phase_a_filter(snapshots: dict) -> list[dict]:
 def _phase_b_filter(candidates: list[dict]) -> list[str]:
     symbols = [c["symbol"] for c in candidates]
     now = datetime.now(timezone.utc)
+    yesterday = now - timedelta(days=1)
     start = now - timedelta(days=30)
 
     req = StockBarsRequest(
         symbol_or_symbols=symbols,
         timeframe=TimeFrame.Day,
         start=start,
-        end=now,
+        end=yesterday,
         limit=20,
-        feed=DataFeed.IEX,
     )
     daily_bars = retry_with_backoff(lambda: _data_client.get_stock_bars(req))
     bars_data = daily_bars.data  # Dict[str, List[Bar]]
