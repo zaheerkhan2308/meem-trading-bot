@@ -61,12 +61,13 @@ def _fetch_snapshots(symbols: list[str]) -> dict:
 
 def _phase_a_filter(snapshots: dict) -> list[dict]:
     candidates = []
-    n_no_bars = n_low_price = n_no_prev = 0
+    n_no_bars = n_low_price = n_no_prev = n_exc = 0
+    first_exc: str | None = None
     for sym, snap in snapshots.items():
         try:
             latest_trade = snap.latest_trade
             daily_bar = snap.daily_bar
-            prev_bar = snap.prev_daily_bar
+            prev_bar = snap.previous_daily_bar
 
             if not latest_trade or not daily_bar or not prev_bar:
                 n_no_bars += 1
@@ -96,15 +97,19 @@ def _phase_a_filter(snapshots: dict) -> list[dict]:
                 }
             )
         except Exception as exc:
-            logger.debug(f"Phase A skip {sym}: {exc}")
+            n_exc += 1
+            if first_exc is None:
+                first_exc = f"{sym}: {type(exc).__name__}: {exc}"
 
     candidates.sort(key=lambda x: x["raw_score"], reverse=True)
     top = candidates[:_PHASE_A_CANDIDATES]
     logger.info(
         f"Phase A: {len(snapshots)} snapshots → missing bars={n_no_bars}, "
         f"price<$5={n_low_price}, no prev_close={n_no_prev}, "
-        f"passed={len(candidates)}, keeping top {len(top)}"
+        f"exceptions={n_exc}, passed={len(candidates)}, keeping top {len(top)}"
     )
+    if first_exc:
+        logger.warning(f"Phase A first exception: {first_exc}")
     return top
 
 
@@ -122,19 +127,20 @@ def _phase_b_filter(candidates: list[dict]) -> list[str]:
         feed=DataFeed.IEX,
     )
     daily_bars = retry_with_backoff(lambda: _data_client.get_stock_bars(req))
+    bars_data = daily_bars.data  # Dict[str, List[Bar]]
 
     qualified = []
     n_no_bars = n_low_vol_ratio = 0
     for c in candidates:
         sym = c["symbol"]
         try:
-            bars_df = daily_bars[sym].df if hasattr(daily_bars[sym], "df") else None
-            if bars_df is None or bars_df.empty:
+            sym_bars = bars_data.get(sym, [])
+            if not sym_bars:
                 n_no_bars += 1
                 logger.debug(f"Phase B {sym}: no historical bars")
                 continue
 
-            avg_vol = float(bars_df["volume"].mean())
+            avg_vol = sum(b.volume for b in sym_bars) / len(sym_bars)
             if avg_vol <= 0:
                 n_no_bars += 1
                 continue
@@ -144,8 +150,6 @@ def _phase_b_filter(candidates: list[dict]) -> list[str]:
                 f"Phase B {sym}: price=${c['price']:.2f} pct={c['pct_change']:.2f}% "
                 f"vol_ratio={volume_ratio:.2f} (day={c['day_volume']:.0f} avg={avg_vol:.0f})"
             )
-            # Lowered from 1.5x — intraday partial volume is well below a full-day
-            # average, so 1.5x would never be reached mid-session.
             if volume_ratio < 0.3:
                 n_low_vol_ratio += 1
                 continue
