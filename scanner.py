@@ -86,16 +86,6 @@ def _phase_a_filter(snapshots: dict) -> list[dict]:
 
             pct_change = (day_close - prev_close) / prev_close * 100
 
-            # Spread filter: only apply when real bid/ask is available.
-            # IEX rarely provides quotes, so the daily-range fallback is skipped.
-            quote = snap.latest_quote
-            if quote and quote.ask_price and quote.bid_price and float(quote.bid_price) > 0:
-                ask = float(quote.ask_price)
-                bid = float(quote.bid_price)
-                spread = (ask - bid) / ((ask + bid) / 2)
-                if spread > 0.02:  # relaxed from 0.5% to 2% for testing
-                    continue
-
             candidates.append(
                 {
                     "symbol": sym,
