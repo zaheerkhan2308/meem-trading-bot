@@ -28,7 +28,6 @@ _app = FastAPI()
 _connections: set[WebSocket] = set()
 
 # ── In-memory state ────────────────────────────────────────────────────────
-_scan_log: list[dict] = []
 _trades: list[dict] = []
 _status: dict = {"running": True, "market_open": False, "last_scan": None}
 _portfolio: dict = {
@@ -44,12 +43,6 @@ _engine_ref = None
 _loop: asyncio.AbstractEventLoop | None = None
 
 
-def _append_log(entry: dict) -> None:
-    _scan_log.append(entry)
-    if len(_scan_log) > 50:
-        _scan_log[:] = _scan_log[-50:]
-
-
 # ── WebSocket ──────────────────────────────────────────────────────────────
 
 @_app.websocket("/ws")
@@ -60,7 +53,6 @@ async def ws_endpoint(websocket: WebSocket):
         await websocket.send_json({
             "type":            "init",
             "status":          _status,
-            "scan_log":        _scan_log,
             "trades":          _trades[-50:],
             "portfolio":       _portfolio,
             "kill_switch":     _kill_switch,
@@ -154,10 +146,7 @@ def _dispatch(coro) -> None:
 
 def push_scan_complete(scan_time: str, tickers: list[str]) -> None:
     _status["last_scan"] = scan_time
-    entry = {"time": scan_time, "type": "scan", "count": len(tickers), "tickers": tickers}
-    _append_log(entry)
-    db.save_scan_log(scan_time, "scan", len(tickers), tickers)
-    _dispatch(_broadcast({"type": "scan_complete", "status": _status, "log_entry": entry}))
+    _dispatch(_broadcast({"type": "scan_complete", "status": _status}))
 
 
 def push_status(market_open: bool, scan_time: str) -> None:
@@ -232,7 +221,6 @@ def get_dry_run() -> bool:
 def start_dashboard(host: str = "0.0.0.0", port: int = 8000) -> None:
     db.init_tables()
 
-    _scan_log[:] = db.load_scan_log(50)
     _trades[:] = db.load_trades(100)
 
     latest_pf = db.load_latest_portfolio()
@@ -243,9 +231,7 @@ def start_dashboard(host: str = "0.0.0.0", port: int = 8000) -> None:
     if latest_wl:
         _watchlist.update(latest_wl)
 
-    logger.info(
-        f"Loaded {len(_scan_log)} log entries, {len(_trades)} trade(s) from DB"
-    )
+    logger.info(f"Loaded {len(_trades)} trade(s) from DB")
 
     def _run():
         global _loop
@@ -450,25 +436,6 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
 .chart-svg { width: 100%; height: 140px; display: block; }
 .chart-no-data { padding: 40px 0; text-align: center; font-size: 13px; color: var(--label3); }
 
-/* ── Scan History ── */
-#log-section { margin-top: 36px; }
-.log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-#log-clear {
-  font-size: 12px; font-weight: 500; color: var(--blue);
-  background: none; border: none; cursor: pointer; padding: 0; font-family: inherit;
-}
-#log-clear:hover { opacity: 0.7; }
-#log-box { background: var(--bg2); border-radius: 16px; overflow: hidden; }
-#log-empty { padding: 28px 20px; text-align: center; font-size: 13px; color: var(--label3); }
-.log-row {
-  display: grid; grid-template-columns: 145px 110px 1fr;
-  align-items: center; gap: 12px; padding: 11px 18px;
-  border-bottom: 0.5px solid var(--sep);
-  animation: logIn 0.25s ease;
-}
-.log-row:last-child { border-bottom: none; }
-.log-row:hover { background: rgba(128,128,128,0.05); }
-@keyframes logIn { from{opacity:0;transform:translateX(-4px)} to{opacity:1;transform:translateX(0)} }
 .log-time {
   font-size: 12px; font-variant-numeric: tabular-nums;
   font-family: ui-monospace,"SF Mono",Menlo,monospace;
@@ -552,7 +519,6 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
 [data-theme="light"] .pf-tile,
 [data-theme="light"] .chart-card,
 [data-theme="light"] #statusbar,
-[data-theme="light"] #log-box,
 [data-theme="light"] #trade-box {
   box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 0 0 0.5px rgba(0,0,0,0.06);
 }
@@ -562,7 +528,6 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
 [data-theme="light"] #theme-btn:hover  { background: rgba(60,60,67,0.12); }
 [data-theme="light"] #kill-btn.ks-off  { background: rgba(60,60,67,0.07); color: rgba(60,60,67,0.50); }
 [data-theme="light"] #dry-btn.dr-off   { background: rgba(60,60,67,0.07); color: rgba(60,60,67,0.50); }
-[data-theme="light"] .log-row:hover,
 [data-theme="light"] .trade-row:hover  { background: rgba(0,0,0,0.035); }
 
 @media (max-width: 680px) {
@@ -570,10 +535,6 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
   main { padding: 20px 16px 60px; }
   #portfolio-bar { grid-template-columns: 1fr 1fr; }
   #kill-btn span.ctrl-label, #dry-btn span.ctrl-label { display: none; }
-
-  /* Scan log: tighten columns */
-  .log-row { grid-template-columns: auto 100px 1fr; gap: 8px; padding: 10px 14px; }
-  .log-time { font-size: 11px; }
 
   /* Trade rows: collapse to 2-line card layout */
   .trade-row {
@@ -611,8 +572,6 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
   /* Chart delta smaller */
   #chart-total { font-size: 22px; }
 
-  /* Scan log: hide time on very small screens, just show badge + desc */
-  .log-row { grid-template-columns: 100px 1fr; }
   .log-time { display: none; }
 }
 
@@ -791,16 +750,6 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
     </div>
   </div>
 
-  <!-- Scan History -->
-  <div id="log-section">
-    <div class="log-header">
-      <span class="section-label">Scan History</span>
-      <button id="log-clear" onclick="clearLog()">Clear</button>
-    </div>
-    <div id="log-box">
-      <div id="log-empty">No scans yet this session</div>
-    </div>
-  </div>
 
 </main>
 
@@ -835,12 +784,10 @@ function connect() {
       applyControls(msg.kill_switch, msg.dry_run);
       applyPortfolio(msg.portfolio);
       if (msg.circuit_breaker) applyCircuitBreaker(msg.circuit_breaker);
-      (msg.scan_log || []).forEach(function(e){ addLogEntry(e, false); });
       (msg.trades || []).forEach(function(t){ addTrade(t, false); });
       if (msg.watchlist && msg.watchlist.tickers && msg.watchlist.tickers.length) renderWatchlist(msg.watchlist);
     } else if (msg.type === 'scan_complete' || msg.type === 'status') {
       applyStatus(msg.status);
-      if (msg.log_entry) addLogEntry(msg.log_entry, true);
     } else if (msg.type === 'shutdown') {
       document.getElementById('bot-badge').className = 'badge badge-offline';
       document.getElementById('bot-text').textContent = 'Offline';
@@ -992,47 +939,6 @@ function renderChart(range) {
     + '<path d="'+areaD+'" fill="url(#'+gId+')"/>'
     + '<path d="'+pathD+'" fill="none" stroke="'+lineColor+'" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>'
     + '</svg>';
-}
-
-/* ═══════════════════════ Scan log ═══════════════════════ */
-function addLogEntry(entry, prepend) {
-  var box = document.getElementById('log-box');
-  var empty = document.getElementById('log-empty');
-  if (empty) empty.remove();
-
-  var badgeClass, badgeLabel, descHtml;
-  if (entry.type === 'scan') {
-    if (entry.count > 0) {
-      badgeClass = 'lb-scan';
-      badgeLabel = entry.count + ' Ticker' + (entry.count !== 1 ? 's' : '');
-      var tags = (entry.tickers || []).map(function(t){ return '<span class="log-ticker-tag">$'+t+'</span>'; }).join('');
-      descHtml = '<span class="log-tickers">'+tags+'</span>';
-    } else {
-      badgeClass = 'lb-empty'; badgeLabel = 'No Candidates';
-      descHtml = '<span>No tickers passed scoring</span>';
-    }
-  } else {
-    badgeClass = 'lb-closed'; badgeLabel = 'Mkt Closed';
-    descHtml = '<span>Scan skipped</span>';
-  }
-
-  var row = document.createElement('div'); row.className = 'log-row';
-  row.innerHTML =
-    '<span class="log-time">'+(entry.time||'—')+'</span>'
-    +'<span class="log-badge '+badgeClass+'"><span class="dot"></span>'+badgeLabel+'</span>'
-    +'<span class="log-desc">'+descHtml+'</span>';
-
-  if (prepend) {
-    box.insertBefore(row, box.firstChild);
-    var rows = box.querySelectorAll('.log-row');
-    if (rows.length > 50) rows[rows.length-1].remove();
-  } else {
-    box.appendChild(row);
-  }
-}
-
-function clearLog() {
-  document.getElementById('log-box').innerHTML = '<div id="log-empty">No scans yet this session</div>';
 }
 
 /* ═══════════════════════ Trade history ═══════════════════════ */
