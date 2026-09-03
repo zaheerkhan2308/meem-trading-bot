@@ -53,7 +53,7 @@ async def ws_endpoint(websocket: WebSocket):
         await websocket.send_json({
             "type":            "init",
             "status":          _status,
-            "trades":          _trades[-50:],
+            "trades":          _trades,
             "portfolio":       _portfolio,
             "kill_switch":     _kill_switch,
             "dry_run":         _dry_run,
@@ -221,7 +221,7 @@ def get_dry_run() -> bool:
 def start_dashboard(host: str = "0.0.0.0", port: int = 8000) -> None:
     db.init_tables()
 
-    _trades[:] = db.load_trades(100)
+    _trades[:] = db.load_trades(100, days=2)
 
     latest_pf = db.load_latest_portfolio()
     if latest_pf:
@@ -487,6 +487,15 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
 .trade-pnl.zer { color: var(--label3); }
 .trade-reason { font-size: 11px; color: var(--label3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trade-dry { font-size: 10px; color: var(--orange); font-weight: 600; margin-left: 4px; }
+.page-btn {
+  padding: 4px 10px; border-radius: 7px; border: none;
+  background: var(--bg3); color: var(--label2);
+  font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;
+  transition: background 0.15s;
+}
+.page-btn:hover { background: var(--bg4); }
+.page-btn:disabled { opacity: 0.3; cursor: default; }
+#trade-page-info { font-size: 11px; color: var(--label3); font-weight: 500; }
 
 /* ── Status bar ── */
 #statusbar {
@@ -703,7 +712,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
   <!-- Status bar -->
   <div id="statusbar">
     <span><span id="wsdot"></span><span id="ws-lbl">Connecting…</span></span>
-    <span>Scans every 10 min · Market hours only</span>
+    <span>Scans every 5 min · Market hours only</span>
   </div>
 
   <!-- Watchlist -->
@@ -742,8 +751,13 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
 
   <!-- Trade History -->
   <div id="trade-section">
-    <div class="log-header">
+    <div class="section-header">
       <span class="section-label">Trade History</span>
+      <div id="trade-pagination" style="display:none; align-items:center; gap:8px;">
+        <button class="page-btn" id="trade-prev" onclick="tradePageNav(-1)">‹ Prev</button>
+        <span id="trade-page-info"></span>
+        <button class="page-btn" id="trade-next" onclick="tradePageNav(1)">Next ›</button>
+      </div>
     </div>
     <div id="trade-box">
       <div id="trade-empty">No trades yet</div>
@@ -758,6 +772,8 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
 var ws, wsDelay = 2000;
 var _killSwitch = false, _dryRun = false;
 var _chartData = [], _chartRange = '3M';
+var _allTrades = [], _tradePage = 0;
+var TRADE_PAGE_SIZE = 50;
 
 /* ═══════════════════════ WebSocket ═══════════════════════ */
 function connect() {
@@ -784,7 +800,9 @@ function connect() {
       applyControls(msg.kill_switch, msg.dry_run);
       applyPortfolio(msg.portfolio);
       if (msg.circuit_breaker) applyCircuitBreaker(msg.circuit_breaker);
-      (msg.trades || []).forEach(function(t){ addTrade(t, false); });
+      _allTrades = (msg.trades || []).slice().reverse();
+      _tradePage = 0;
+      renderTradePage();
       if (msg.watchlist && msg.watchlist.tickers && msg.watchlist.tickers.length) renderWatchlist(msg.watchlist);
     } else if (msg.type === 'scan_complete' || msg.type === 'status') {
       applyStatus(msg.status);
@@ -794,7 +812,10 @@ function connect() {
     } else if (msg.type === 'portfolio_update') {
       applyPortfolio(msg.portfolio);
     } else if (msg.type === 'trade_event') {
-      addTrade(msg.trade, true);
+      _allTrades.unshift(msg.trade);
+      if (_allTrades.length > 100) _allTrades.pop();
+      if (_tradePage === 0) renderTradePage();
+      else updateTradePagination();
     } else if (msg.type === 'circuit_breaker_alert') {
       applyCircuitBreaker(msg.reason);
     } else if (msg.type === 'watchlist_update') {
@@ -942,22 +963,15 @@ function renderChart(range) {
 }
 
 /* ═══════════════════════ Trade history ═══════════════════════ */
-function addTrade(t, prepend) {
-  var box = document.getElementById('trade-box');
-  var empty = document.getElementById('trade-empty');
-  if (empty) empty.remove();
-
+function buildTradeRow(t) {
   var pnl = t.pnl || 0;
   var pnlClass = pnl > 0.005 ? 'pos' : pnl < -0.005 ? 'neg' : 'zer';
   var pnlStr = t.action === 'BUY' ? '—' : (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
-
   var ts = '';
   try {
     ts = new Date(t.timestamp).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', timeZone:'America/New_York'});
   } catch(e) { ts = t.scan_time || '—'; }
-
   var dryTag = t.dry_run ? '<span class="trade-dry">DRY</span>' : '';
-
   var row = document.createElement('div'); row.className = 'trade-row';
   row.innerHTML =
     '<span class="trade-time">'+ts+'</span>'
@@ -966,14 +980,38 @@ function addTrade(t, prepend) {
     +'<span class="trade-qty">'+t.qty+' @ $'+(t.price||0).toFixed(2)+'</span>'
     +'<span class="trade-pnl '+pnlClass+'">'+pnlStr+'</span>'
     +'<span class="trade-reason">'+(t.reason||'—')+'</span>';
+  return row;
+}
 
-  if (prepend) {
-    box.insertBefore(row, box.firstChild);
-    var rows = box.querySelectorAll('.trade-row');
-    if (rows.length > 100) rows[rows.length-1].remove();
-  } else {
-    box.appendChild(row);
+function renderTradePage() {
+  var box = document.getElementById('trade-box');
+  if (_allTrades.length === 0) {
+    box.innerHTML = '<div id="trade-empty">No trades yet</div>';
+    document.getElementById('trade-pagination').style.display = 'none';
+    return;
   }
+  var start = _tradePage * TRADE_PAGE_SIZE;
+  var end = Math.min(start + TRADE_PAGE_SIZE, _allTrades.length);
+  box.innerHTML = '';
+  for (var i = start; i < end; i++) box.appendChild(buildTradeRow(_allTrades[i]));
+  updateTradePagination();
+}
+
+function updateTradePagination() {
+  var total = _allTrades.length;
+  var totalPages = Math.ceil(total / TRADE_PAGE_SIZE);
+  var pag = document.getElementById('trade-pagination');
+  pag.style.display = total > TRADE_PAGE_SIZE ? 'flex' : 'none';
+  document.getElementById('trade-page-info').textContent =
+    'Page ' + (_tradePage + 1) + ' of ' + totalPages + ' · ' + total + ' trades';
+  document.getElementById('trade-prev').disabled = _tradePage === 0;
+  document.getElementById('trade-next').disabled = _tradePage >= totalPages - 1;
+}
+
+function tradePageNav(dir) {
+  var totalPages = Math.ceil(_allTrades.length / TRADE_PAGE_SIZE);
+  _tradePage = Math.max(0, Math.min(_tradePage + dir, totalPages - 1));
+  renderTradePage();
 }
 
 /* ═══════════════════════ Watchlist ═══════════════════════ */

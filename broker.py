@@ -78,18 +78,18 @@ class BrokerClient:
 
     # ── Orders ────────────────────────────────────────────────────────────
 
-    def place_market_buy(self, ticker: str, qty: int) -> dict | None:
+    def place_market_buy(self, ticker: str, notional: float) -> dict | None:
         if self.dry_run:
-            logger.info(f"[DRY-RUN] BUY {qty}x {ticker}")
-            return {"dry_run": True, "ticker": ticker, "qty": qty, "side": "buy"}
+            logger.info(f"[DRY-RUN] BUY ${notional:.2f} of {ticker}")
+            return {"dry_run": True, "ticker": ticker, "notional": notional, "side": "buy"}
         try:
             req = MarketOrderRequest(
-                symbol=ticker, qty=qty,
+                symbol=ticker, notional=round(notional, 2),
                 side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
             )
             order = self._client.submit_order(req)
-            logger.info(f"BUY order submitted: {ticker} x{qty} id={order.id}")
-            return {"id": str(order.id), "ticker": ticker, "qty": qty, "side": "buy"}
+            logger.info(f"BUY order submitted: {ticker} ${notional:.2f} id={order.id}")
+            return {"id": str(order.id), "ticker": ticker, "notional": notional, "side": "buy"}
         except Exception as exc:
             logger.error(f"BUY {ticker} failed: {exc}")
             return None

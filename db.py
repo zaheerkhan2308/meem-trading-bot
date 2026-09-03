@@ -61,7 +61,7 @@ def init_tables() -> None:
                     timestamp   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     ticker      VARCHAR(10) NOT NULL,
                     action      VARCHAR(10) NOT NULL,
-                    qty         INTEGER     NOT NULL,
+                    qty         NUMERIC(12,4) NOT NULL,
                     price       NUMERIC(12,4),
                     score       NUMERIC(5,4),
                     reason      TEXT,
@@ -69,6 +69,9 @@ def init_tables() -> None:
                     dry_run     BOOLEAN     DEFAULT FALSE,
                     pnl         NUMERIC(12,4) DEFAULT 0
                 )
+            """)
+            cur.execute("""
+                ALTER TABLE trades ALTER COLUMN qty TYPE NUMERIC(12,4)
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS portfolio_snapshots (
@@ -190,16 +193,18 @@ def load_scan_log(limit: int = 50) -> list[dict]:
         return []
 
 
-def load_trades(limit: int = 100) -> list[dict]:
-    """Return the most recent trades, oldest-first."""
+def load_trades(limit: int = 100, days: int = 2) -> list[dict]:
+    """Return the most recent trades from the last N days, oldest-first."""
     try:
         with _conn() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT * FROM (
-                        SELECT * FROM trades ORDER BY timestamp DESC LIMIT %s
+                        SELECT * FROM trades
+                        WHERE timestamp >= NOW() - (%s || ' days')::INTERVAL
+                        ORDER BY timestamp DESC LIMIT %s
                     ) sub ORDER BY timestamp ASC
-                """, (limit,))
+                """, (str(days), limit))
                 rows = cur.fetchall()
         return [_row_to_trade(r) for r in rows]
     except Exception as exc:
@@ -330,7 +335,7 @@ def _row_to_trade(row) -> dict:
     return {
         "ticker":    row["ticker"],
         "action":    row["action"],
-        "qty":       int(row["qty"]),
+        "qty":       float(row["qty"]),
         "price":     float(row["price"] or 0),
         "score":     float(row["score"] or 0),
         "reason":    row["reason"] or "",

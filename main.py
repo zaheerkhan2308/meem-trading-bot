@@ -20,7 +20,8 @@ logging.basicConfig(
 from config import (
     PORT,
     BUY_THRESHOLD, SELL_THRESHOLD, STOP_LOSS_PCT,
-    MAX_POSITION_SIZE, DAILY_LOSS_LIMIT, DAILY_PROFIT_TARGET,
+    MAX_POSITION_SIZE, MAX_POSITIONS, MAX_CAPITAL,
+    DAILY_LOSS_LIMIT, DAILY_PROFIT_TARGET,
 )
 from scanner import get_top_movers
 from scorer import get_composite_score
@@ -206,6 +207,8 @@ def main() -> None:
         sell_threshold=SELL_THRESHOLD,
         stop_loss_pct=STOP_LOSS_PCT,
         max_position_usd=MAX_POSITION_SIZE,
+        max_positions=MAX_POSITIONS,
+        max_capital=MAX_CAPITAL,
     )
 
     # Wire callbacks
@@ -223,7 +226,7 @@ def main() -> None:
     scheduler.add_job(
         run_scan,
         trigger="interval",
-        minutes=10,
+        minutes=5,
         next_run_time=datetime.now(),
         id="scan_job",
         max_instances=1,
@@ -240,7 +243,7 @@ def main() -> None:
     )
 
     scheduler.start()
-    logger.info("Scheduler started — scanning every 10 minutes")
+    logger.info("Scheduler started — scanning every 5 minutes")
     send_startup()
 
     try:

@@ -2,7 +2,6 @@
 Trading engine — converts signals into BUY/SELL/HOLD decisions.
 """
 import logging
-import math
 from typing import Callable
 
 import db
@@ -21,6 +20,8 @@ class TradingEngine:
         sell_threshold: float,
         stop_loss_pct: float,
         max_position_usd: float,
+        max_positions: int = 40,
+        max_capital: float = 10000.0,
     ):
         self.broker = broker
         self.risk = risk
@@ -28,6 +29,8 @@ class TradingEngine:
         self.sell_threshold = sell_threshold
         self.stop_loss_pct = stop_loss_pct
         self.max_position_usd = max_position_usd
+        self.max_positions = max_positions
+        self.max_capital = max_capital
         self._processed_keys: set[str] = set()
         self._trade_callbacks: list[Callable[[dict], None]] = []
 
@@ -96,7 +99,7 @@ class TradingEngine:
                     self.risk.record_trade_pnl(realized)
                     trade = {
                         "ticker": ticker, "action": "SELL",
-                        "qty": int(pos["qty"]), "price": price,
+                        "qty": float(pos["qty"]), "price": price,
                         "score": score, "reason": reason,
                         "scan_time": scan_time,
                         "dry_run": self.broker.dry_run,
@@ -106,6 +109,13 @@ class TradingEngine:
                     logger.info(f"SELL {ticker}: {reason} P&L=${realized:+.2f}")
 
         # Entry: buy new positions for high-scoring candidates
+        def _position_size(score: float) -> float:
+            if score >= 0.8:
+                return 500.0
+            if score >= 0.7:
+                return 250.0
+            return 100.0
+
         for sig in signals:
             if self.risk.is_halted():
                 break
@@ -124,34 +134,42 @@ class TradingEngine:
             if key in self._processed_keys:
                 continue
 
-            qty = math.floor(self.max_position_usd / price) if price > 0 else 0
-            if qty < 1:
-                logger.info(f"SKIP {ticker}: price ${price:.2f} > max ${self.max_position_usd:.0f}")
-                continue
-            if qty * price > cash:
-                logger.info(f"SKIP {ticker}: insufficient cash (need ${qty*price:.2f}, have ${cash:.2f})")
+            if len(positions) >= self.max_positions:
+                logger.info(f"SKIP {ticker}: max positions reached ({self.max_positions})")
+                break
+
+            notional = _position_size(score)
+            deployed = sum(p["market_value"] for p in positions.values())
+            if deployed + notional > self.max_capital:
+                logger.info(f"SKIP {ticker}: max capital reached (deployed=${deployed:.0f}, limit=${self.max_capital:.0f})")
+                break
+
+            if notional > cash:
+                logger.info(f"SKIP {ticker}: insufficient cash (need ${notional:.2f}, have ${cash:.2f})")
                 continue
 
-            result = self.broker.place_market_buy(ticker, qty)
+            result = self.broker.place_market_buy(ticker, notional)
             if result is not None:
                 self._processed_keys.add(key)
-                cash -= qty * price
+                cash -= notional
+                fractional_qty = round(notional / price, 4) if price > 0 else 0
                 trade = {
                     "ticker": ticker, "action": "BUY",
-                    "qty": qty, "price": price,
+                    "qty": fractional_qty, "price": price,
                     "score": score,
                     "reason": (
                         f"Score {score:.3f} >= {self.buy_threshold} | "
                         f"tech={sig.get('technical_score', 0):.3f} "
                         f"sent={sig.get('sentiment_score', 0):.3f} "
-                        f"hist={sig.get('historical_score', 0):.3f}"
+                        f"hist={sig.get('historical_score', 0):.3f} "
+                        f"notional=${notional:.0f}"
                     ),
                     "scan_time": scan_time,
                     "dry_run": self.broker.dry_run,
                     "pnl": 0.0,
                 }
                 self._fire_trade(trade)
-                logger.info(f"BUY {ticker} x{qty} @ ${price:.2f} score={score:.3f}")
+                logger.info(f"BUY {ticker} ~{fractional_qty} shares (${notional:.0f}) @ ${price:.2f} score={score:.3f}")
 
         # Trim idempotency set
         if len(self._processed_keys) > 500:
