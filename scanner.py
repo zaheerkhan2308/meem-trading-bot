@@ -115,14 +115,14 @@ def _phase_a_filter(snapshots: dict) -> list[dict]:
 def _phase_b_filter(candidates: list[dict]) -> list[str]:
     symbols = [c["symbol"] for c in candidates]
     now = datetime.now(timezone.utc)
-    yesterday = now - timedelta(days=1)
     start = now - timedelta(days=30)
 
     req = StockBarsRequest(
         symbol_or_symbols=symbols,
         timeframe=TimeFrame.Day,
         start=start,
-        end=yesterday,
+        end=now,
+        feed=DataFeed.IEX,
     )
     daily_bars = retry_with_backoff(lambda: _data_client.get_stock_bars(req))
     bars_data = daily_bars.data  # Dict[str, List[Bar]]
