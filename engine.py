@@ -2,6 +2,7 @@
 Trading engine — converts signals into BUY/SELL/HOLD decisions.
 """
 import logging
+from datetime import datetime, timezone
 from typing import Callable
 
 import db
@@ -104,6 +105,7 @@ class TradingEngine:
                         "scan_time": scan_time,
                         "dry_run": self.broker.dry_run,
                         "pnl": realized,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                     self._fire_trade(trade)
                     logger.info(f"SELL {ticker}: {reason} P&L=${realized:+.2f}")
@@ -167,6 +169,7 @@ class TradingEngine:
                     "scan_time": scan_time,
                     "dry_run": self.broker.dry_run,
                     "pnl": 0.0,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
                 self._fire_trade(trade)
                 logger.info(f"BUY {ticker} ~{fractional_qty} shares (${notional:.0f}) @ ${price:.2f} score={score:.3f}")

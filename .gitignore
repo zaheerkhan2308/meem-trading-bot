@@ -6,3 +6,4 @@ __pycache__/
 model_cache/
 *.log
 mock_signal.py
+CLAUDE.md

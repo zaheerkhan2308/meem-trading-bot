@@ -66,10 +66,10 @@ def _update_portfolio() -> None:
         account   = _broker.get_account()
         positions = _broker.get_positions()
         pos_value   = sum(p["market_value"]   for p in positions)
-        unrealized  = sum(p["unrealized_pl"]  for p in positions)
         total       = account["portfolio_value"]
-        daily_pnl   = (_risk.realized_pnl + unrealized) if _risk else unrealized
-        daily_pnl_pct = (daily_pnl / total * 100) if total > 0 else 0.0
+        last_equity = account["last_equity"]
+        daily_pnl   = total - last_equity
+        daily_pnl_pct = (daily_pnl / last_equity * 100) if last_equity > 0 else 0.0
         dashboard.push_portfolio({
             "total_value":    total,
             "cash":           account["cash"],

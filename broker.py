@@ -37,6 +37,7 @@ class BrokerClient:
             "equity":          float(acct.equity),
             "portfolio_value": float(acct.portfolio_value),
             "buying_power":    float(acct.buying_power),
+            "last_equity":     float(acct.last_equity),
         }
 
     # ── Positions ─────────────────────────────────────────────────────────
