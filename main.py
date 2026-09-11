@@ -19,7 +19,7 @@ logging.basicConfig(
 
 from config import (
     PORT,
-    BUY_THRESHOLD, SELL_THRESHOLD, STOP_LOSS_PCT,
+    BUY_THRESHOLD, SELL_THRESHOLD, STOP_LOSS_PCT, TRAILING_STOP_PCT,
     MAX_POSITION_SIZE, MAX_POSITIONS, MAX_CAPITAL,
     DAILY_LOSS_LIMIT, DAILY_PROFIT_TARGET,
 )
@@ -209,6 +209,7 @@ def main() -> None:
         max_position_usd=MAX_POSITION_SIZE,
         max_positions=MAX_POSITIONS,
         max_capital=MAX_CAPITAL,
+        trailing_stop_pct=TRAILING_STOP_PCT,
     )
 
     # Wire callbacks

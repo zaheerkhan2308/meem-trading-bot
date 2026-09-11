@@ -20,8 +20,10 @@ MAX_CAPITAL: float = float(os.getenv("MAX_CAPITAL", "10000"))
 BUY_THRESHOLD: float = float(os.getenv("BUY_THRESHOLD", "0.60"))
 SELL_THRESHOLD: float = float(os.getenv("SELL_THRESHOLD", "0.40"))
 STOP_LOSS_PCT: float = float(os.getenv("STOP_LOSS_PCT", "0.06"))
+TRAILING_STOP_PCT: float = float(os.getenv("TRAILING_STOP_PCT", "0.05"))
 DAILY_LOSS_LIMIT: float = float(os.getenv("DAILY_LOSS_LIMIT", "50.0"))
 DAILY_PROFIT_TARGET: float = float(os.getenv("DAILY_PROFIT_TARGET", "50.0"))
+KILL_SWITCH_PASSWORD: str = os.getenv("KILL_SWITCH_PASSWORD", "MeemTrading")
 
 
 def retry_with_backoff(func, max_retries: int = 3):

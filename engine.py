@@ -23,6 +23,7 @@ class TradingEngine:
         max_position_usd: float,
         max_positions: int = 40,
         max_capital: float = 10000.0,
+        trailing_stop_pct: float = 0.05,
     ):
         self.broker = broker
         self.risk = risk
@@ -32,7 +33,9 @@ class TradingEngine:
         self.max_position_usd = max_position_usd
         self.max_positions = max_positions
         self.max_capital = max_capital
+        self.trailing_stop_pct = trailing_stop_pct
         self._processed_keys: set[str] = set()
+        self._peak_prices: dict[str, float] = {}
         self._trade_callbacks: list[Callable[[dict], None]] = []
 
     def register_trade_callback(self, cb: Callable[[dict], None]) -> None:
@@ -76,26 +79,26 @@ class TradingEngine:
             entry = pos["avg_entry"]
             pnl_pct = (price - entry) / entry if entry else 0.0
 
+            # Update peak price for trailing stop
+            peak = self._peak_prices.get(ticker, entry)
+            if price > peak:
+                peak = price
+                self._peak_prices[ticker] = peak
+
+            trailing_stop_price = peak * (1 - self.trailing_stop_pct)
+
             reason = None
-            if pnl_pct <= -self.stop_loss_pct:
+            if price <= trailing_stop_price:
                 reason = (
-                    f"Stop-loss hit — entry ${entry:.2f} → ${price:.2f} "
-                    f"({pnl_pct * 100:.1f}%)"
-                )
-            elif sig is None:
-                reason = (
-                    f"Not in scan this cycle — exiting position "
-                    f"(entry ${entry:.2f}, current ${price:.2f}, {pnl_pct * 100:+.1f}%)"
-                )
-            elif score < self.sell_threshold:
-                reason = (
-                    f"Score {score:.3f} below sell threshold {self.sell_threshold} — "
-                    f"entry ${entry:.2f}, current ${price:.2f} ({pnl_pct * 100:+.1f}%)"
+                    f"Trailing stop hit — peak ${peak:.2f}, current ${price:.2f} "
+                    f"(down {((peak - price) / peak * 100):.1f}% from peak | "
+                    f"entry ${entry:.2f}, P&L {pnl_pct * 100:+.1f}%)"
                 )
 
             if reason and ticker not in open_orders:
                 result = self.broker.close_position(ticker)
                 if result is not None:
+                    self._peak_prices.pop(ticker, None)
                     realized = pos["unrealized_pl"]
                     self.risk.record_trade_pnl(realized)
                     trade = {
@@ -153,6 +156,7 @@ class TradingEngine:
             result = self.broker.place_market_buy(ticker, notional)
             if result is not None:
                 self._processed_keys.add(key)
+                self._peak_prices[ticker] = price
                 cash -= notional
                 fractional_qty = round(notional / price, 4) if price > 0 else 0
                 trade = {

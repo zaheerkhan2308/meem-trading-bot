@@ -16,6 +16,7 @@ import uvicorn
 from fastapi import FastAPI, Request as _Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 import db
+from config import KILL_SWITCH_PASSWORD
 
 _ET = ZoneInfo("America/New_York")
 
@@ -80,6 +81,8 @@ async def index():
 async def api_kill_switch(request: _Request):
     global _kill_switch, _circuit_breaker
     data = await request.json()
+    if data.get("password") != KILL_SWITCH_PASSWORD:
+        return JSONResponse({"ok": False, "error": "Invalid password"}, status_code=401)
     _kill_switch = bool(data.get("active", False))
     if not _kill_switch:
         # Re-enabling: clear the circuit breaker banner so a page refresh
@@ -705,8 +708,8 @@ main { max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
         <div class="pf-val" id="pf-total">—</div>
         <div class="pf-sub color-dim" id="pf-pnl-sub">—</div>
       </div>
-      <div class="pf-tile">
-        <div class="pf-lbl">Daily P&amp;L</div>
+      <div class="pf-tile" onclick="togglePnlMode()" style="cursor:pointer" title="Click to toggle Daily / All-Time P&L">
+        <div class="pf-lbl" id="pf-pnl-lbl">Daily P&amp;L <span style="font-size:9px;opacity:0.45;font-weight:500;text-transform:none;letter-spacing:0">↕ toggle</span></div>
         <div class="pf-val-sm" id="pf-pnl">—</div>
         <div class="pf-sub color-dim" id="pf-pnl-pct">—</div>
       </div>
@@ -784,6 +787,9 @@ var ws, wsDelay = 2000;
 var _killSwitch = false, _dryRun = false;
 var _chartData = [], _chartRange = '3M', _chartPts = [], _chartLastVal = 0;
 var _allTrades = [], _tradePage = 0;
+var _pnlMode = 'daily';
+var _dailyPnl = 0, _dailyPnlPct = 0, _currentTotal = 0;
+var _allTimePnl = null, _allTimePnlPct = null;
 var TRADE_PAGE_SIZE = 50;
 
 /* ═══════════════════════ WebSocket ═══════════════════════ */
@@ -857,9 +863,14 @@ function applyControls(ks, dr) {
 function toggleKillSwitch() {
   var next = !_killSwitch;
   if (next && !confirm('Activate kill switch? This will halt all new trades until manually disabled.')) return;
-  fetch('/api/kill-switch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({active: next}) })
+  var pwd = prompt('Enter password to ' + (next ? 'activate' : 'deactivate') + ' kill switch:');
+  if (pwd === null) return;
+  fetch('/api/kill-switch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({active: next, password: pwd}) })
     .then(function(r){ return r.json(); })
-    .then(function(d){ applyControls(d.kill_switch, _dryRun); })
+    .then(function(d){
+      if (d.ok) applyControls(d.kill_switch, _dryRun);
+      else alert('Incorrect password.');
+    })
     .catch(function(err){ console.error('kill-switch toggle failed', err); });
 }
 
@@ -878,11 +889,17 @@ function applyCircuitBreaker(reason) {
 }
 
 function reenableTrading() {
-  fetch('/api/kill-switch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({active: false}) })
+  var pwd = prompt('Enter password to re-enable trading:');
+  if (pwd === null) return;
+  fetch('/api/kill-switch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({active: false, password: pwd}) })
     .then(function(r){ return r.json(); })
     .then(function(d){
-      applyControls(d.kill_switch, _dryRun);
-      if (!d.kill_switch) document.getElementById('cb-banner').style.display = 'none';
+      if (d.ok) {
+        applyControls(d.kill_switch, _dryRun);
+        if (!d.kill_switch) document.getElementById('cb-banner').style.display = 'none';
+      } else {
+        alert('Incorrect password.');
+      }
     });
 }
 
@@ -891,20 +908,56 @@ function fmt$(v) { return '$' + Number(v || 0).toLocaleString('en-US', {minimumF
 
 function applyPortfolio(p) {
   if (!p) return;
-  document.getElementById('pf-total').textContent = fmt$(p.total_value);
-  var pnl = p.daily_pnl || 0, pnlPct = p.daily_pnl_pct || 0;
-  var pnlEl = document.getElementById('pf-pnl');
-  pnlEl.textContent = (pnl >= 0 ? '+' : '') + fmt$(pnl);
-  pnlEl.className = 'pf-val-sm ' + (pnl > 0 ? 'color-green' : pnl < 0 ? 'color-red' : 'color-dim');
-  document.getElementById('pf-pnl-pct').textContent = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+  _currentTotal = p.total_value || 0;
+  document.getElementById('pf-total').textContent = fmt$(_currentTotal);
+  _dailyPnl = p.daily_pnl || 0;
+  _dailyPnlPct = p.daily_pnl_pct || 0;
+  if (_chartData.length >= 1) {
+    var first = _chartData[0].total_value;
+    _allTimePnl = _currentTotal - first;
+    _allTimePnlPct = first ? (_allTimePnl / first * 100) : 0;
+  }
+  renderPnlTile();
   document.getElementById('pf-cash').textContent = fmt$(p.cash);
   document.getElementById('pf-positions').textContent = fmt$(p.positions_value);
   document.getElementById('pf-pnl-sub').textContent = 'Today';
 }
 
+function renderPnlTile() {
+  var lbl = document.getElementById('pf-pnl-lbl');
+  var val = document.getElementById('pf-pnl');
+  var sub = document.getElementById('pf-pnl-pct');
+  if (!lbl || !val || !sub) return;
+  var isAllTime = _pnlMode === 'alltime';
+  var pnl = isAllTime ? _allTimePnl : _dailyPnl;
+  var pct = isAllTime ? _allTimePnlPct : _dailyPnlPct;
+  var title = isAllTime ? 'All-Time P&L' : 'Daily P&L';
+  lbl.innerHTML = title + ' <span style="font-size:9px;opacity:0.45;font-weight:500;text-transform:none;letter-spacing:0">⇕ toggle</span>';
+  if (pnl === null || pnl === undefined) {
+    val.textContent = '—';
+    val.className = 'pf-val-sm color-dim';
+    sub.textContent = 'No snapshot data yet';
+  } else {
+    val.textContent = (pnl >= 0 ? '+' : '') + fmt$(pnl);
+    val.className = 'pf-val-sm ' + (pnl > 0 ? 'color-green' : pnl < 0 ? 'color-red' : 'color-dim');
+    sub.textContent = pct !== null ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : '—';
+  }
+}
+
+function togglePnlMode() {
+  _pnlMode = _pnlMode === 'daily' ? 'alltime' : 'daily';
+  renderPnlTile();
+}
+
 /* ═══════════════════════ Chart ═══════════════════════ */
 fetch('/api/chart').then(function(r){ return r.json(); }).then(function(data) {
   _chartData = data.snapshots || [];
+  if (_chartData.length >= 1 && _currentTotal > 0) {
+    var first = _chartData[0].total_value;
+    _allTimePnl = _currentTotal - first;
+    _allTimePnlPct = first ? (_allTimePnl / first * 100) : 0;
+    renderPnlTile();
+  }
   renderChart(_chartRange);
 }).catch(function() {
   document.getElementById('chart-inner').innerHTML = '<div class="chart-no-data">Could not load chart data</div>';
