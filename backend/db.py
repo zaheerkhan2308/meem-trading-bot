@@ -138,6 +138,15 @@ def init_tables() -> None:
                 )
             """)
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS stock_positions_history (
+                    id          SERIAL PRIMARY KEY,
+                    strategy    VARCHAR(20) NOT NULL,
+                    ticker      VARCHAR(10) NOT NULL,
+                    action      VARCHAR(20) NOT NULL,
+                    changed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
                 INSERT INTO strategy_settings (strategy)
                 VALUES ('default'), ('selected')
                 ON CONFLICT (strategy) DO NOTHING
@@ -207,6 +216,37 @@ def save_strategy_settings(strategy: str, tickers: list[str], overrides: dict) -
             """, (strategy, json.dumps(tickers), json.dumps(overrides)))
         conn.commit()
     return {"strategy": strategy, "tickers": tickers, "overrides": overrides}
+
+
+def save_stock_positions_history(strategy: str, tickers: list[str], action: str) -> None:
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO stock_positions_history (strategy, ticker, action) VALUES (%s, %s, %s)",
+                    [(strategy, ticker, action) for ticker in tickers],
+                )
+            conn.commit()
+    except Exception as exc:
+        logger.error(f"DB save_stock_positions_history failed: {exc}")
+
+
+def load_stock_positions_history(strategy: str, limit: int = 100) -> list[dict]:
+    try:
+        with _conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT ticker, action, changed_at
+                    FROM stock_positions_history
+                    WHERE strategy = %s
+                    ORDER BY changed_at DESC
+                    LIMIT %s
+                """, (strategy, limit))
+                rows = cur.fetchall()
+        return [{"ticker": row["ticker"], "action": row["action"], "changed_at": str(row["changed_at"])} for row in rows]
+    except Exception as exc:
+        logger.error(f"DB load_stock_positions_history failed: {exc}")
+        return []
 
 
 def save_selected_watchlist(scan_time: str, tickers: list[dict]) -> None:

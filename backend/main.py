@@ -191,8 +191,10 @@ def run_scan() -> None:
             dashboard.push_scan_complete(scan_time, [])
             _update_portfolio()
             return
+        default_config = dashboard.get_strategy_config("default")
+        watchlist_limit = default_config["MAX_POSITIONS"]
         _log_watchlist(default_candidates)
-        dashboard.push_watchlist(default_candidates[:10], scan_time)
+        dashboard.push_watchlist(default_candidates, scan_time, limit=watchlist_limit)
         dashboard.push_selected_watchlist(selected_candidates, scan_time)
 
         elapsed = time.time() - start_ts

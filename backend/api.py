@@ -218,7 +218,12 @@ async def update_strategy_settings(request: Request) -> dict:
         if key not in _base_strategy_config:
             raise HTTPException(422, f"Unsupported strategy setting: {key}")
         cleaned[key] = int(value) if key == "MAX_POSITIONS" else float(value)
+    previous_tickers = set(_strategy_settings[strategy].get("tickers", []))
+    added = sorted(set(tickers) - previous_tickers)
+    removed = sorted(previous_tickers - set(tickers))
     saved = db.save_strategy_settings(strategy, tickers, cleaned)
+    db.save_stock_positions_history(strategy, added, "ADDED")
+    db.save_stock_positions_history(strategy, removed, "REMOVED")
     saved["overrides"] = {**_base_strategy_config, **cleaned}
     _strategy_settings[strategy] = saved
     for engine in _engine_refs:
@@ -237,6 +242,13 @@ async def update_strategy_settings(request: Request) -> dict:
     if strategy == "selected":
         asyncio.create_task(_refresh_selected_watchlist(tickers))
     return saved
+
+
+@app.get("/api/stock-positions-history")
+async def stock_positions_history(strategy: str = "default") -> dict:
+    if strategy not in {"default", "selected"}:
+        raise HTTPException(422, "strategy must be default or selected")
+    return {"entries": await asyncio.to_thread(db.load_stock_positions_history, strategy)}
 
 
 async def _refresh_selected_watchlist(tickers: list[str]) -> None:
@@ -480,7 +492,7 @@ def push_circuit_breaker(reason: str) -> None:
     _dispatch(_broadcast({"type": "circuit_breaker_alert", "reason": reason}))
 
 
-def push_watchlist(candidates: list[dict], scan_time: str) -> None:
+def push_watchlist(candidates: list[dict], scan_time: str, limit: int = 10) -> None:
     global _watchlist, _ticker_streaks
     previous = {ticker["ticker"] for ticker in _watchlist.get("tickers", [])}
     streaks: dict[str, int] = {}
@@ -490,7 +502,7 @@ def push_watchlist(candidates: list[dict], scan_time: str) -> None:
         streaks[ticker] = _ticker_streaks.get(ticker, 1) + 1 if ticker in previous else 1
         enriched.append({**candidate, "streak": streaks[ticker]})
     _ticker_streaks = streaks
-    _watchlist = {"scan_time": scan_time, "tickers": enriched}
+    _watchlist = {"scan_time": scan_time, "tickers": enriched[:limit], "limit": limit}
     db.save_watchlist(scan_time, enriched)
     _dispatch(_broadcast({"type": "watchlist_update", "watchlist": _watchlist}))
 
