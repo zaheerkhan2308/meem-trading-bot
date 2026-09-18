@@ -31,6 +31,21 @@ _trading_client = TradingClient(ALPACA_API_KEY, ALPACA_API_SECRET, paper=_PAPER)
 
 _SNAPSHOT_CHUNK = 500
 _PHASE_A_CANDIDATES = 100
+_asset_catalog: list[dict] | None = None
+
+
+def _get_asset_catalog() -> list[dict]:
+    global _asset_catalog
+    if _asset_catalog is None:
+        assets = retry_with_backoff(lambda: _trading_client.get_all_assets(
+            GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE)
+        ))
+        _asset_catalog = [
+            {"symbol": asset.symbol, "name": asset.name}
+            for asset in assets
+            if asset.tradable
+        ]
+    return _asset_catalog
 
 
 def _get_asset_universe() -> list[str]:
@@ -190,6 +205,24 @@ def get_top_movers() -> list[str]:
 
     logger.info("Scanner: phase B (20-day avg volume) filtering...")
     return _phase_b_filter(phase_a)
+
+
+def search_tickers(query: str) -> list[dict]:
+    """Return matching active tradable Alpaca symbols for settings autocomplete."""
+    catalog = _get_asset_catalog()
+    normalized = query.strip().upper()
+    if not normalized:
+        return []
+    return [
+        asset for asset in sorted(catalog, key=lambda item: item["symbol"])
+        if normalized in asset["symbol"] or normalized in asset["name"].upper()
+    ][:20]
+
+
+def validate_tickers(tickers: list[str]) -> list[str]:
+    """Return manually entered symbols that are not active tradable assets."""
+    catalog_symbols = {asset["symbol"] for asset in _get_asset_catalog()}
+    return [ticker for ticker in tickers if ticker not in catalog_symbols]
 
 
 instrument_module(globals())

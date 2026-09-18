@@ -67,11 +67,27 @@ def init_tables() -> None:
                     reason      TEXT,
                     scan_time   VARCHAR(60),
                     dry_run     BOOLEAN     DEFAULT FALSE,
-                    pnl         NUMERIC(12,4) DEFAULT 0
+                    pnl         NUMERIC(12,4) DEFAULT 0,
+                    strategy    VARCHAR(20)  NOT NULL DEFAULT 'default'
                 )
             """)
             cur.execute("""
                 ALTER TABLE trades ALTER COLUMN qty TYPE NUMERIC(12,4)
+            """)
+            cur.execute("""
+                ALTER TABLE trades ADD COLUMN IF NOT EXISTS strategy VARCHAR(20) NOT NULL DEFAULT 'default'
+            """)
+            cur.execute("CREATE TABLE IF NOT EXISTS default_trades (LIKE trades INCLUDING ALL)")
+            cur.execute("CREATE TABLE IF NOT EXISTS selected_trades (LIKE trades INCLUDING ALL)")
+            cur.execute("""
+                INSERT INTO default_trades
+                SELECT * FROM trades WHERE strategy = 'default'
+                ON CONFLICT DO NOTHING
+            """)
+            cur.execute("""
+                INSERT INTO selected_trades
+                SELECT * FROM trades WHERE strategy = 'selected'
+                ON CONFLICT DO NOTHING
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS portfolio_snapshots (
@@ -97,8 +113,149 @@ def init_tables() -> None:
                     tickers     JSONB NOT NULL DEFAULT '[]'
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS selected_watchlist_log (
+                    id          SERIAL PRIMARY KEY,
+                    scanned_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    scan_time   VARCHAR(60),
+                    tickers     JSONB NOT NULL DEFAULT '[]'
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS trading_settings (
+                    id          INTEGER PRIMARY KEY CHECK (id = 1),
+                    mode        VARCHAR(20) NOT NULL,
+                    tickers     JSONB NOT NULL DEFAULT '[]',
+                    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS strategy_settings (
+                    strategy    VARCHAR(20) PRIMARY KEY,
+                    tickers     JSONB NOT NULL DEFAULT '[]',
+                    overrides   JSONB NOT NULL DEFAULT '{}',
+                    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                INSERT INTO strategy_settings (strategy)
+                VALUES ('default'), ('selected')
+                ON CONFLICT (strategy) DO NOTHING
+            """)
         conn.commit()
     logger.info("DB tables ready")
+
+
+def load_trading_settings() -> dict:
+    try:
+        with _conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT mode, tickers FROM trading_settings WHERE id = 1")
+                row = cur.fetchone()
+        if not row:
+            return {"mode": "default", "tickers": []}
+        tickers = row["tickers"]
+        return {"mode": row["mode"], "tickers": list(tickers or [])}
+    except Exception as exc:
+        logger.error(f"DB load_trading_settings failed: {exc}")
+        return {"mode": "default", "tickers": []}
+
+
+def save_trading_settings(mode: str, tickers: list[str]) -> None:
+    import json
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO trading_settings (id, mode, tickers)
+                    VALUES (1, %s, %s::jsonb)
+                    ON CONFLICT (id) DO UPDATE SET
+                        mode = EXCLUDED.mode,
+                        tickers = EXCLUDED.tickers,
+                        updated_at = NOW()
+                """, (mode, json.dumps(tickers)))
+            conn.commit()
+    except Exception as exc:
+        logger.error(f"DB save_trading_settings failed: {exc}")
+
+
+def load_strategy_settings(strategy: str) -> dict:
+    try:
+        with _conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT tickers, overrides FROM strategy_settings WHERE strategy = %s", (strategy,))
+                row = cur.fetchone()
+        if not row:
+            return {"strategy": strategy, "tickers": [], "overrides": {}}
+        return {"strategy": strategy, "tickers": list(row["tickers"] or []), "overrides": dict(row["overrides"] or {})}
+    except Exception as exc:
+        logger.error(f"DB load_strategy_settings failed: {exc}")
+        return {"strategy": strategy, "tickers": [], "overrides": {}}
+
+
+def save_strategy_settings(strategy: str, tickers: list[str], overrides: dict) -> dict:
+    import json
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO strategy_settings (strategy, tickers, overrides)
+                VALUES (%s, %s::jsonb, %s::jsonb)
+                ON CONFLICT (strategy) DO UPDATE SET
+                    tickers = EXCLUDED.tickers,
+                    overrides = EXCLUDED.overrides,
+                    updated_at = NOW()
+            """, (strategy, json.dumps(tickers), json.dumps(overrides)))
+        conn.commit()
+    return {"strategy": strategy, "tickers": tickers, "overrides": overrides}
+
+
+def save_selected_watchlist(scan_time: str, tickers: list[dict]) -> None:
+    import json
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO selected_watchlist_log (scan_time, tickers)
+                    VALUES (%s, %s::jsonb)
+                """, (scan_time, json.dumps(tickers)))
+                cur.execute("""
+                    DELETE FROM selected_watchlist_log
+                    WHERE scanned_at < NOW() - INTERVAL '7 days'
+                """)
+            conn.commit()
+    except Exception as exc:
+        logger.error(f"DB save_selected_watchlist failed: {exc}")
+
+
+def load_selected_watchlist() -> dict | None:
+    import json
+    try:
+        with _conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT scan_time, tickers FROM selected_watchlist_log
+                    ORDER BY scanned_at DESC LIMIT 1
+                """)
+                row = cur.fetchone()
+        if not row:
+            return None
+        tickers = row["tickers"]
+        if isinstance(tickers, str):
+            tickers = json.loads(tickers)
+        return {"scan_time": row["scan_time"], "tickers": list(tickers or [])}
+    except Exception as exc:
+        logger.error(f"DB load_selected_watchlist failed: {exc}")
+        return None
+
+
+def clear_selected_watchlist() -> None:
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM selected_watchlist_log")
+            conn.commit()
+    except Exception as exc:
+        logger.error(f"DB clear_selected_watchlist failed: {exc}")
 
 
 # ── Writes ─────────────────────────────────────────────────────────────────
@@ -121,17 +278,21 @@ def save_scan_log(scan_time: str, event_type: str,
 
 def save_trade(trade: dict) -> None:
     try:
+        strategy = trade.get("strategy", "default")
+        if strategy not in {"default", "selected"}:
+            strategy = "default"
+        table = f"{strategy}_trades"
         with _conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO trades
-                        (ticker, action, qty, price, score, reason, scan_time, dry_run, pnl)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                cur.execute(f"""
+                    INSERT INTO {table}
+                        (ticker, action, qty, price, score, reason, scan_time, dry_run, pnl, strategy)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     trade["ticker"], trade["action"], trade["qty"],
                     trade.get("price"), trade.get("score"),
                     trade.get("reason", ""), trade.get("scan_time", ""),
-                    trade.get("dry_run", False), trade.get("pnl", 0.0),
+                    trade.get("dry_run", False), trade.get("pnl", 0.0), strategy,
                 ))
             conn.commit()
     except Exception as exc:
@@ -193,14 +354,15 @@ def load_scan_log(limit: int = 50) -> list[dict]:
         return []
 
 
-def load_trades(limit: int = 100, days: int = 2) -> list[dict]:
+def load_trades(limit: int = 100, days: int = 2, strategy: str | None = None) -> list[dict]:
     """Return the most recent trades from the last N days, oldest-first."""
     try:
+        table = f"{strategy}_trades" if strategy in {"default", "selected"} else "trades"
         with _conn() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT * FROM (
-                        SELECT * FROM trades
+                        SELECT * FROM {table}
                         WHERE timestamp >= NOW() - (%s || ' days')::INTERVAL
                         ORDER BY timestamp DESC LIMIT %s
                     ) sub ORDER BY timestamp ASC
@@ -343,6 +505,7 @@ def _row_to_trade(row) -> dict:
         "dry_run":   bool(row["dry_run"]),
         "pnl":       float(row["pnl"] or 0),
         "timestamp": str(row["timestamp"]),
+        "strategy": row.get("strategy", "default"),
     }
 
 

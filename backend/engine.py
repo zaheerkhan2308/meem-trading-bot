@@ -25,6 +25,7 @@ class TradingEngine:
         max_positions: int = 40,
         max_capital: float = 10000.0,
         trailing_stop_pct: float = 0.05,
+        strategy: str = "default",
     ):
         self.broker = broker
         self.risk = risk
@@ -35,6 +36,7 @@ class TradingEngine:
         self.max_positions = max_positions
         self.max_capital = max_capital
         self.trailing_stop_pct = trailing_stop_pct
+        self.strategy = strategy
         self._processed_keys: set[str] = set()
         self._peak_prices: dict[str, float] = {}
         self._trade_callbacks: list[Callable[[dict], None]] = []
@@ -103,6 +105,7 @@ class TradingEngine:
                     realized = pos["unrealized_pl"]
                     self.risk.record_trade_pnl(realized)
                     trade = {
+                        "strategy": self.strategy,
                         "ticker": ticker, "action": "SELL",
                         "qty": float(pos["qty"]), "price": price,
                         "score": score, "reason": reason,
@@ -161,6 +164,7 @@ class TradingEngine:
                 cash -= notional
                 fractional_qty = round(notional / price, 4) if price > 0 else 0
                 trade = {
+                    "strategy": self.strategy,
                     "ticker": ticker, "action": "BUY",
                     "qty": fractional_qty, "price": price,
                     "score": score,

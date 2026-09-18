@@ -47,6 +47,8 @@ _ET = ZoneInfo("America/New_York")
 _broker: BrokerClient | None = None
 _risk: RiskManager | None = None
 _engine: TradingEngine | None = None
+_selected_risk: RiskManager | None = None
+_selected_engine: TradingEngine | None = None
 
 
 def _now_et() -> str:
@@ -82,6 +84,7 @@ def _update_portfolio() -> None:
             "daily_pnl":      daily_pnl,
             "daily_pnl_pct":  daily_pnl_pct,
         })
+        dashboard.update_strategy_portfolios(positions)
     except Exception as exc:
         logger.error(f"Portfolio update failed: {exc}")
 
@@ -108,6 +111,23 @@ def _take_portfolio_snapshot() -> None:
 
 def _log_watchlist(candidates: list[dict]) -> None:
     logger.info("=" * 70)
+
+
+def _score_tickers(tickers: list[str]) -> list[dict]:
+    candidates = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(get_composite_score, ticker): ticker for ticker in tickers}
+        for future in as_completed(futures):
+            ticker = futures[future]
+            try:
+                result = future.result(timeout=60)
+                if result is not None:
+                    candidates.append(result)
+                    logger.info("%s: composite=%.3f", ticker, result["composite_score"])
+            except Exception as exc:
+                logger.error("%s: scoring error — %s", ticker, exc)
+    candidates.sort(key=lambda item: item["composite_score"], reverse=True)
+    return candidates
     logger.info(f"WATCHLIST — top {len(candidates)} scored tickers this cycle")
     logger.info(f"{'#':>3}  {'TICKER':<6}  {'SCORE':>5}  {'TECH%':>5} {'SENT%':>5} {'HIST%':>5}  {'RSI':>5} {'MACD':>4} {'EMA':>3} {'VOL':>5}  PRICE")
     logger.info("-" * 70)
@@ -143,47 +163,53 @@ def run_scan() -> None:
     try:
         market_open = is_market_open()
         dashboard.push_status(market_open=market_open, scan_time=scan_time)
+        selection = dashboard.get_trading_settings()
 
         if not market_open:
+            if selection["mode"] == "manual" and selection["tickers"]:
+                selected_candidates = _score_tickers(selection["tickers"])
+                dashboard.push_selected_watchlist(selected_candidates, scan_time)
             logger.info("Market closed — skipping scan")
             return
 
-        tickers = get_top_movers()
-        if not tickers:
+        with ThreadPoolExecutor(max_workers=2) as scan_executor:
+            default_tickers_future = scan_executor.submit(get_top_movers)
+            selected_tickers = dashboard.get_strategy_tickers("selected")
+            if not selected_tickers and selection["mode"] == "manual":
+                selected_tickers = selection["tickers"]
+            default_tickers = default_tickers_future.result()
+            default_candidates_future = scan_executor.submit(_score_tickers, default_tickers)
+            selected_candidates_future = (
+                scan_executor.submit(_score_tickers, selected_tickers)
+                if selected_tickers else None
+            )
+            default_candidates = default_candidates_future.result()
+            selected_candidates = selected_candidates_future.result() if selected_candidates_future else []
+
+        if not default_tickers and not selected_tickers:
             logger.warning("No movers returned by scanner")
             dashboard.push_scan_complete(scan_time, [])
             _update_portfolio()
             return
-        logger.info(f"Top movers: {tickers}")
-
-        candidates = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(get_composite_score, t): t for t in tickers}
-            for future in as_completed(futures):
-                ticker = futures[future]
-                try:
-                    result = future.result(timeout=60)
-                    if result is not None:
-                        candidates.append(result)
-                        logger.info(f"{ticker}: composite={result['composite_score']:.3f}")
-                    else:
-                        logger.info(f"{ticker}: scoring returned None — skipped")
-                except Exception as exc:
-                    logger.error(f"{ticker}: scoring error — {exc}")
-
-        candidates.sort(key=lambda x: x["composite_score"], reverse=True)
-
-        if candidates:
-            _log_watchlist(candidates)
-            dashboard.push_watchlist(candidates[:10], scan_time)
+        _log_watchlist(default_candidates)
+        dashboard.push_watchlist(default_candidates[:10], scan_time)
+        dashboard.push_selected_watchlist(selected_candidates, scan_time)
 
         elapsed = time.time() - start_ts
-        logger.info(f"=== Scan complete in {elapsed:.1f}s — {len(candidates)} candidate(s) ===")
+        logger.info(
+            "=== Scan complete in %.1fs — default=%d selected=%d candidate(s) ===",
+            elapsed, len(default_candidates), len(selected_candidates),
+        )
 
-        dashboard.push_scan_complete(scan_time, [c["ticker"] for c in candidates])
+        dashboard.push_scan_complete(
+            scan_time,
+            [c["ticker"] for c in default_candidates + selected_candidates],
+        )
 
         if _engine is not None:
-            _engine.process_signals(candidates, scan_time)
+            _engine.process_signals(default_candidates, scan_time)
+        if _selected_engine is not None and selected_candidates:
+            _selected_engine.process_signals(selected_candidates, scan_time)
 
         _update_portfolio()
 
@@ -192,7 +218,7 @@ def run_scan() -> None:
 
 
 def main() -> None:
-    global _broker, _risk, _engine
+    global _broker, _risk, _engine, _selected_risk, _selected_engine
 
     logger.info("Trading Signal Bot starting up")
 
@@ -202,25 +228,46 @@ def main() -> None:
 
     # Initialise trading engine
     _broker = BrokerClient(dry_run=dashboard.get_dry_run())
+    default_config = dashboard.get_strategy_config("default")
+    selected_config = dashboard.get_strategy_config("selected")
     _risk   = RiskManager(
-        daily_loss_limit=DAILY_LOSS_LIMIT,
-        daily_profit_target=DAILY_PROFIT_TARGET,
+        daily_loss_limit=default_config["DAILY_LOSS_LIMIT"],
+        daily_profit_target=default_config["DAILY_PROFIT_TARGET"],
     )
     _engine = TradingEngine(
         broker=_broker, risk=_risk,
-        buy_threshold=BUY_THRESHOLD,
-        sell_threshold=SELL_THRESHOLD,
-        stop_loss_pct=STOP_LOSS_PCT,
-        max_position_usd=MAX_POSITION_SIZE,
-        max_positions=MAX_POSITIONS,
-        max_capital=MAX_CAPITAL,
-        trailing_stop_pct=TRAILING_STOP_PCT,
+        buy_threshold=default_config["BUY_THRESHOLD"],
+        sell_threshold=default_config["SELL_THRESHOLD"],
+        stop_loss_pct=default_config["STOP_LOSS_PCT"],
+        max_position_usd=default_config["MAX_POSITION_SIZE"],
+        max_positions=default_config["MAX_POSITIONS"],
+        max_capital=default_config["MAX_CAPITAL"],
+        trailing_stop_pct=default_config["TRAILING_STOP_PCT"],
+        strategy="default",
+    )
+    _selected_risk = RiskManager(
+        daily_loss_limit=selected_config["DAILY_LOSS_LIMIT"],
+        daily_profit_target=selected_config["DAILY_PROFIT_TARGET"],
+    )
+    _selected_engine = TradingEngine(
+        broker=_broker,
+        risk=_selected_risk,
+        buy_threshold=selected_config["BUY_THRESHOLD"],
+        sell_threshold=selected_config["SELL_THRESHOLD"],
+        stop_loss_pct=selected_config["STOP_LOSS_PCT"],
+        max_position_usd=selected_config["MAX_POSITION_SIZE"],
+        max_positions=selected_config["MAX_POSITIONS"],
+        max_capital=selected_config["MAX_CAPITAL"],
+        trailing_stop_pct=selected_config["TRAILING_STOP_PCT"],
+        strategy="selected",
     )
 
     # Wire callbacks
     _risk.register_halt_callback(dashboard.push_circuit_breaker)
+    _selected_risk.register_halt_callback(dashboard.push_circuit_breaker)
     _engine.register_trade_callback(dashboard.push_trade)
-    dashboard.set_engine(_engine)
+    _selected_engine.register_trade_callback(dashboard.push_trade)
+    dashboard.set_engines([_engine, _selected_engine])
 
     # Restore today's circuit breaker state (survives Railway redeploys)
     dashboard.restore_circuit_breaker()
