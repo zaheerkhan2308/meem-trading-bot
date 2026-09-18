@@ -1,0 +1,9 @@
+import { useState } from 'react'
+import { api } from '../api/client'
+import { Panel } from './Panel'
+export function Controls({ marketOpen, killSwitch, dryRun, circuitBreaker, onControls }: { marketOpen: boolean | null; killSwitch: boolean; dryRun: boolean; circuitBreaker: string | null; onControls: (next: { marketOpen?: boolean | null; lastScan?: string | null; killSwitch?: boolean; dryRun?: boolean; circuitBreaker?: string | null }) => void }) {
+  const [error, setError] = useState('')
+  async function toggleKill() { const password = window.prompt(`Enter password to ${killSwitch ? 'disable' : 'activate'} kill switch`); if (password === null) return; try { const data = await api.setKillSwitch(!killSwitch, password); onControls({ killSwitch: data.kill_switch, circuitBreaker: data.kill_switch ? circuitBreaker : null }); setError('') } catch (e) { setError(e instanceof Error ? e.message : 'Could not update kill switch') } }
+  async function toggleDry() { try { const data = await api.setDryRun(!dryRun); onControls({ dryRun: data.dry_run }); setError('') } catch (e) { setError(e instanceof Error ? e.message : 'Could not update dry-run') } }
+  return <Panel title="Trading controls">{circuitBreaker && <p className="alert">Circuit breaker: {circuitBreaker}</p>}<div className="controls"><span className={`market-status ${marketOpen === true ? 'open' : marketOpen === false ? 'closed' : ''}`}><span className="status-dot" />Market {marketOpen === null ? 'unknown' : marketOpen ? 'Open' : 'Closed'}</span><button className={killSwitch ? 'danger' : ''} onClick={toggleKill}>{killSwitch ? 'Kill Switch ON' : 'Kill Switch OFF'}</button><button className={dryRun ? 'active' : ''} onClick={toggleDry}>Dry Run {dryRun ? 'ON' : 'OFF'}</button></div>{error && <p className="error">{error}</p>}</Panel>
+}

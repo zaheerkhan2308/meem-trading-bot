@@ -1,0 +1,73 @@
+html[data-theme='light'] {
+  color: #172033;
+  background: #f4f7fb;
+}
+
+html[data-theme='light'] body {
+  background: #f4f7fb;
+}
+
+html[data-theme='light'] .panel {
+  background: #ffffff;
+  border-color: #d5deeb;
+}
+
+html[data-theme='light'] button {
+  color: #172033;
+  background: #e6edf6;
+  border-color: #b8c7da;
+}
+
+html[data-theme='light'] th,
+html[data-theme='light'] .eyebrow,
+html[data-theme='light'] small,
+html[data-theme='light'] .muted {
+  color: #61708a;
+}
+
+.header-actions,
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.theme-button {
+  font-size: 12px;
+}
+
+.market-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #3b5374;
+  border-radius: 8px;
+  color: #91a4be;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.market-status.open {
+  color: #65e6a7;
+}
+
+.market-status.closed {
+  color: #ffb86b;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@media (max-width: 720px) {
+  .header-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+}

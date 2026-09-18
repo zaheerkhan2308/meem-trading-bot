@@ -1,9 +1,17 @@
 .env
+.env.local
+.env.production
 venv/
 __pycache__/
 *.pyc
 *.pyo
 model_cache/
 *.log
+logs/
 mock_signal.py
 CLAUDE.md
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+.neon/
+node_modules/

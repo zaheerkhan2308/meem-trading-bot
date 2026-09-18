@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 ENV HF_HOME=/app/model_cache
+ENV MEEM_ENV_FILE=.env.production
 
 # Railway injects PORT at runtime
 EXPOSE 8000
