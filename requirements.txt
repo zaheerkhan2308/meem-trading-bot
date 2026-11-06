@@ -1,5 +1,5 @@
 # Alpaca market data SDK
-alpaca-py==0.30.1
+alpaca-py==0.45.0
 
 # HTTP and environment
 requests==2.32.4
